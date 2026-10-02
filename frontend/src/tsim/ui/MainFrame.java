@@ -60,6 +60,8 @@ public final class MainFrame extends JFrame {
     private final MarketTable marketTable = new MarketTable();
     private final KLineChart kline = new KLineChart();
     private final TickChart tickChart = new TickChart();
+    /** 左侧图表页签（K 线图 / 分时图）；切市场时需要跟着切页。 */
+    private final javax.swing.JTabbedPane chartTabs = new javax.swing.JTabbedPane();
     private final TradePanel tradePanel = new TradePanel();
     private final PositionPanel positionPanel = new PositionPanel();
     private final OrderPanel orderPanel = new OrderPanel();
@@ -133,7 +135,6 @@ public final class MainFrame extends JFrame {
         left.setBackground(UITheme.PANEL);
         left.add(marketTable, BorderLayout.CENTER);
 
-        JTabbedPane chartTabs = new JTabbedPane();
         chartTabs.setFont(UITheme.SMALL_FONT);
         chartTabs.addTab("K 线图", kline);
         chartTabs.addTab("分时图", tickChart);
@@ -274,8 +275,12 @@ public final class MainFrame extends JFrame {
 
     private void bindHandlers() {
         marketTable.addSelectionListener((market, symbol) -> {
+            boolean marketChanged = !market.equals(selectedMarket);
             selectedMarket = market;
             selectedSymbol = symbol;
+            if (marketChanged) {
+                syncChartTabToMarket();
+            }
             updateCharts();
             updateTradePanel();
         });
@@ -560,16 +565,32 @@ public final class MainFrame extends JFrame {
             JsonDeserializer.StockQuote q = lastMarket.stock(selectedSymbol);
             if (q != null) {
                 kline.setQuote(q, 2);
+                // 分时图对股票同样喂数据，避免切页后看到上一只标的的旧图
+                tickChart.setBars(q.symbol, q.name, q.hist, q.prevClose, 2);
             } else {
                 kline.setSymbol(selectedSymbol, "");
+                tickChart.setSymbol(selectedSymbol, "");
             }
         } else {
             JsonDeserializer.ForexQuote q = lastMarket.forex(selectedSymbol);
             if (q != null) {
                 tickChart.setQuote(q);
+                // 外汇也有 hist：K 线图必须一并喂，否则停在上一只股票的图上（K 线不动）
+                kline.setForexQuote(q);
             } else {
                 tickChart.setSymbol(selectedSymbol, "");
+                kline.setSymbol(selectedSymbol, "");
             }
+        }
+    }
+
+    /** 切换市场时同步切换左侧图表页：股票看 K 线，外汇看分时。
+     *
+     * <p>只在市场真的变化时切页，避免用户手动选页后被每秒的 tick 强行拉回。</p> */
+    private void syncChartTabToMarket() {
+        int want = "stock".equals(selectedMarket) ? 0 : 1;
+        if (chartTabs.getSelectedIndex() != want) {
+            chartTabs.setSelectedIndex(want);
         }
     }
 

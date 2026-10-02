@@ -16,7 +16,7 @@ if not defined JAVA if exist "A:\jdk-17.0.12\bin\javaw.exe" set "JAVA=A:\jdk-17.
 if not defined JAVA for %%j in (javaw.exe) do if not "%%~$PATH:j"=="" set "JAVA=%%~$PATH:j"
 
 if not defined JAVA (
-  echo [X] javaw.exe not found. Please install JDK 17 (or keep runtime\jre in the package).
+  echo [X] javaw.exe not found. Please install JDK 17, or keep runtime\jre in the package.
   pause
   exit /b 2
 )
