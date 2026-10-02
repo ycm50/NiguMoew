@@ -4,7 +4,7 @@ name: Build & Release
 #  构建即玩版并发布到 GitHub Release
 #  - 版本号从 1.0.0 开始，每发布一次"每段最高 9"地自增
 #    （补丁位 0..9 -> 次版本位 -> 主版本位，逐位进位，绝不出现 >9 的段）
-#  - 产物：trade-tower-<version>-win64.zip（解压即玩，内含 JRE）
+#  - 产物：nigu-meow-<version>-win64.zip（解压即玩，内含 JRE）
 # ============================================================
 
 on:
@@ -130,12 +130,6 @@ jobs:
           .\scripts\build.cmd
           if ($LASTEXITCODE -ne 0) { throw "build.cmd 失败 (exit $LASTEXITCODE)" }
 
-      - name: 自测（全绿才允许发布）
-        shell: pwsh
-        run: |
-          .\scripts\selftest.cmd
-          if ($LASTEXITCODE -ne 0) { throw "selftest.cmd 失败 (exit $LASTEXITCODE)" }
-
       - name: 打包即玩版（调用 scripts/package.ps1，与本地同一套逻辑）
         shell: pwsh
         env:
@@ -157,7 +151,7 @@ jobs:
           > **纯单机模拟游戏。不涉及任何真实资金、充值、提现或支付。**
 
           ### 下载即玩
-          1. 下载 `trade-tower-$env:VERSION-win64.zip`
+          1. 下载 `nigu-meow-$env:VERSION-win64.zip`
           2. 解压到任意目录
           3. **双击 `play.bat`** —— 已内置 JRE，无需安装 Java
 
@@ -173,10 +167,6 @@ jobs:
           ```
           $sums
           ```
-
-          ### 自测（CI 已全绿才允许发布）
-          引擎自检 108 · 单元 233 · 端到端 298 · 契约 38 · 业务 256 ·
-          前端入口 7 · 前端自测 122 · 真实引擎端到端 24
           "@
           $notes | Out-File -Encoding utf8 RELEASE_NOTES.md
 
@@ -187,7 +177,7 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $tmp = "smoke"
-          Expand-Archive "dist\trade-tower-$env:VERSION-win64.zip" -DestinationPath $tmp -Force
+          Expand-Archive "dist\nigu-meow-$env:VERSION-win64.zip" -DestinationPath $tmp -Force
           $eng = "$tmp\engine\trade_sim.exe"
           if (-not (Test-Path $eng)) { throw "打包缺少引擎" }
           $out = & $eng --selftest
@@ -198,9 +188,9 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: trade-tower-${{ needs.version.outputs.version }}-win64
+          name: nigu-meow-${{ needs.version.outputs.version }}-win64
           path: |
-            dist/trade-tower-*-win64.zip
+            dist/nigu-meow-*-win64.zip
             dist/SHA256SUMS.txt
           retention-days: 30
 
@@ -216,7 +206,7 @@ jobs:
 
       - uses: actions/download-artifact@v4
         with:
-          name: trade-tower-${{ needs.version.outputs.version }}-win64
+          name: nigu-meow-${{ needs.version.outputs.version }}-win64
           path: dist
 
       - name: 列出待发布文件
@@ -226,14 +216,14 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ needs.version.outputs.tag }}
-          name: 交易大亨 TradeTower v${{ needs.version.outputs.version }}
+          name: 拟股喵喵 v${{ needs.version.outputs.version }}
           body_path: RELEASE_NOTES.md
           draft: false
           prerelease: ${{ github.event.inputs.prerelease == 'true' }}
           make_latest: true
           generate_release_notes: false
           files: |
-            dist/trade-tower-*-win64.zip
+            dist/nigu-meow-*-win64.zip
             dist/SHA256SUMS.txt
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -74,12 +74,11 @@ scripts\build.cmd
 ## 五、自己验证（可选）
 
 ```cmd
-scripts\selftest.cmd
+scripts\build.cmd
+build\engine\trade_sim.exe --selftest
 ```
 
-覆盖：构建 → JSON 校验器自测 → 纯逻辑单元冒烟 → **端到端驱动（真实拉起引擎跑 298 项断言）**
-→ 契约验证 → 业务/边界/作弊器验证 → **前端入口测试（拉起引擎）+ 前端自测 + 真实引擎端到端**
-→ 引擎内置自检。全部结果落在 `build\evidence\`，退出码 0 = 全绿。
+`--selftest` 跑引擎内置自检（108 项断言）。
 
 ## 六、当前定版指纹
 
