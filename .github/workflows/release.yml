@@ -1,0 +1,239 @@
+name: Build & Release
+
+# ============================================================
+#  构建即玩版并发布到 GitHub Release
+#  - 版本号从 1.0.0 开始，每发布一次"每段最高 9"地自增
+#    （补丁位 0..9 -> 次版本位 -> 主版本位，逐位进位，绝不出现 >9 的段）
+#  - 产物：trade-tower-<version>-win64.zip（解压即玩，内含 JRE）
+# ============================================================
+
+on:
+  push:
+    branches: [ main, master ]
+    tags: [ 'v*' ]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: '手动指定版本号（留空 = 自动递增）'
+        required: false
+        default: ''
+      prerelease:
+        description: '标记为预发布'
+        type: boolean
+        required: false
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # ----------------------------------------------------------
+  # 1) 计算版本号：1.0.0 -> 1.0.1 -> ... -> 1.0.9 -> 1.1.0 ...
+  # ----------------------------------------------------------
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.calc.outputs.version }}
+      tag: ${{ steps.calc.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 计算版本号
+        id: calc
+        shell: bash
+        env:
+          MANUAL: ${{ github.event.inputs.version || '' }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          if [ -n "${MANUAL}" ]; then
+            V="${MANUAL#v}"
+          elif [[ "${REF_NAME}" == v* ]]; then
+            V="${REF_NAME#v}"
+          else
+            # 取最近一个 vX.Y.Z tag 作为基线
+            LAST="$(git tag --list 'v*' | sed 's/^v//' \
+              | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' | sort -t. -k1,1n -k2,2n -k3,3n | tail -n1 || true)"
+            if [ -z "${LAST}" ]; then
+              # 仓库里还没有任何发布 -> 首个版本固定为 1.0.0
+              V="1.0.0"
+            else
+              MAJ="$(echo "${LAST}" | cut -d. -f1)"
+              MIN="$(echo "${LAST}" | cut -d. -f2)"
+              PAT="$(echo "${LAST}" | cut -d. -f3)"
+              # "每段最高 9"：从个位开始逐位进位，任何一段都不会超过 9
+              if [ "${PAT}" -lt 9 ]; then
+                PAT=$((PAT + 1))
+              else
+                PAT=0
+                if [ "${MIN}" -lt 9 ]; then
+                  MIN=$((MIN + 1))
+                else
+                  MIN=0
+                  MAJ=$((MAJ + 1))
+                fi
+              fi
+              V="${MAJ}.${MIN}.${PAT}"
+            fi
+          fi
+          if ! echo "${V}" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "::error::非法版本号 '${V}'（应为 X.Y.Z）"; exit 1
+          fi
+          echo "version=${V}" >> "$GITHUB_OUTPUT"
+          echo "tag=v${V}"    >> "$GITHUB_OUTPUT"
+          echo "本次版本号: ${V}"
+
+  # ----------------------------------------------------------
+  # 2) 在 Windows 上构建 + 打包成"解压即玩"的 zip
+  # ----------------------------------------------------------
+  build:
+    needs: version
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装 MSYS2 (提供 g++ 与 MinGW 运行时 DLL)
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: false
+          install: >-
+            mingw-w64-ucrt-x86_64-gcc
+
+      - name: 配置 MSYS2 到 PATH
+        shell: pwsh
+        run: |
+          "C:\msys64\ucrt64\bin" | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
+
+      - name: 安装 JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: 显示工具链版本
+        shell: pwsh
+        run: |
+          g++ --version
+          java -version
+          javac -version
+
+      - name: 构建（引擎 + 前端 + 工具）
+        shell: pwsh
+        run: |
+          .\scripts\build.cmd
+          if ($LASTEXITCODE -ne 0) { throw "build.cmd 失败 (exit $LASTEXITCODE)" }
+
+      - name: 自测（全绿才允许发布）
+        shell: pwsh
+        run: |
+          .\scripts\selftest.cmd
+          if ($LASTEXITCODE -ne 0) { throw "selftest.cmd 失败 (exit $LASTEXITCODE)" }
+
+      - name: 打包即玩版（调用 scripts/package.ps1，与本地同一套逻辑）
+        shell: pwsh
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          .\scripts\package.ps1 -Version $env:VERSION
+          if ($LASTEXITCODE -ne 0) { throw "package.ps1 失败 (exit $LASTEXITCODE)" }
+          Get-Content dist\SHA256SUMS.txt
+
+      - name: 生成发布说明
+        shell: pwsh
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          $sums = Get-Content dist\SHA256SUMS.txt -Raw
+          $notes = @"
+          ## 交易大亨 TradeTower v$env:VERSION
+
+          > **纯单机模拟游戏。不涉及任何真实资金、充值、提现或支付。**
+
+          ### 下载即玩
+          1. 下载 `trade-tower-$env:VERSION-win64.zip`
+          2. 解压到任意目录
+          3. **双击 `play.bat`** —— 已内置 JRE，无需安装 Java
+
+          ### 功能
+          - **股票**：20 只标的（沪深港美各 5 只），限价 / 市价，100 股整数倍校验
+          - **汇市**：10 个货币对，做多 / 做空、杠杆、保证金、50% 爆仓线强制平仓
+          - **作弊器**：22 项（注入资金、无限资金、上帝模式、透视、强制改价、拉盘砸盘、停牌、
+            解锁 T+1、关闭 T+1、全部成交、胜率、快进、手工新闻、强制破产 …）
+          - **自动 T+1**：当日买入当日卖会被拒；跨日自动解锁；可选自动重挂单与止盈止损
+          - **时间倍率**：0.25x ~ 256x，含低速预设（0.25 / 0.5 / 1 / 2 天每秒），空格键开始暂停
+
+          ### 校验和
+          ```
+          $sums
+          ```
+
+          ### 自测（CI 已全绿才允许发布）
+          引擎自检 108 · 单元 233 · 端到端 298 · 契约 38 · 业务 256 ·
+          前端入口 7 · 前端自测 122 · 真实引擎端到端 24
+          "@
+          $notes | Out-File -Encoding utf8 RELEASE_NOTES.md
+
+      - name: 冒烟验证产物（解压后真的能跑）
+        shell: pwsh
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $tmp = "smoke"
+          Expand-Archive "dist\trade-tower-$env:VERSION-win64.zip" -DestinationPath $tmp -Force
+          $eng = "$tmp\engine\trade_sim.exe"
+          if (-not (Test-Path $eng)) { throw "打包缺少引擎" }
+          $out = & $eng --selftest
+          $out | Select-Object -Last 3
+          if ($LASTEXITCODE -ne 0) { throw "打包后的引擎自检未通过" }
+          if (-not (Test-Path "$tmp\runtime\jre\bin\java.exe")) { throw "打包缺少随包 JRE" }
+          Write-Host "产物冒烟通过"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: trade-tower-${{ needs.version.outputs.version }}-win64
+          path: |
+            dist/trade-tower-*-win64.zip
+            dist/SHA256SUMS.txt
+          retention-days: 30
+
+  # ----------------------------------------------------------
+  # 3) 发布到 GitHub Release
+  # ----------------------------------------------------------
+  release:
+    needs: [ version, build ]
+    runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: trade-tower-${{ needs.version.outputs.version }}-win64
+          path: dist
+
+      - name: 列出待发布文件
+        run: ls -l dist
+
+      - name: 发布 Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.version.outputs.tag }}
+          name: 交易大亨 TradeTower v${{ needs.version.outputs.version }}
+          body_path: RELEASE_NOTES.md
+          draft: false
+          prerelease: ${{ github.event.inputs.prerelease == 'true' }}
+          make_latest: true
+          generate_release_notes: false
+          files: |
+            dist/trade-tower-*-win64.zip
+            dist/SHA256SUMS.txt
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

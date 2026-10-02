@@ -1,0 +1,99 @@
+# ============================================================
+#  TradeTower 交易大亨 - Git 忽略规则
+#  原则：源码与文档进仓库，一切【构建产物】与【测试证据】都不进。
+#  任何人 clone 后只需 scripts\build.cmd 就能从零重建全部产物。
+# ============================================================
+
+# ---- 构建产物（全部由 build.cmd 生成）----
+/build/
+/dist/
+/out/
+/target/
+
+# ---- C++ 编译产物 ----
+*.o
+*.obj
+*.exe
+*.dll
+*.lib
+*.a
+*.so
+*.pdb
+*.ilk
+*.exp
+*.idb
+*.res
+*.gch
+*.pch
+
+# ---- Java 编译产物 ----
+*.class
+*.jar
+*.war
+*.ear
+*.jmod
+hs_err_pid*.log
+replay_pid*.log
+
+# ---- Visual Studio / CMake ----
+.vs/
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+build.ninja
+.ninja_deps
+.ninja_log
+Makefile
+*.vcxproj*
+*.sln
+compile_commands.json
+
+# ---- 编辑器 / IDE ----
+.idea/
+*.iml
+*.ipr
+*.iws
+.vscode/
+*.swp
+*.swo
+*~
+.obsidian/
+
+# ---- 操作系统 ----
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+desktop.ini
+$RECYCLE.BIN/
+.DS_Store
+._*
+
+# ---- 日志 / 证据 / 临时文件 ----
+*.log
+*.tmp
+*.temp
+*.bak
+*.orig
+*.rej
+*.stackdump
+core
+*_probe*
+_probe*
+_p.cmd
+_dbg*
+*.hex
+
+# ---- 本地运行残留（引擎/前端退出后可能留下）----
+stderr.txt
+stdout.txt
+*.new
+*.old
+
+# ---- 敏感信息：绝对不要提交密钥或令牌 ----
+.env
+.env.*
+*.pem
+*.key
+*.pfx
+*.p12
+secrets.json
