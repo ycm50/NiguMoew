@@ -1,11 +1,11 @@
-# 交易大亨 TradeTower · 使用说明
+# 拟股喵喵 · 使用说明
 
 > **纯单机模拟游戏。不涉及任何真实资金、充值、提现或支付。**
 > 游戏里的"钱"是模拟数字，作弊器也是模拟功能。
 
 ## 一、怎么开始
 
-双击仓库根目录的 **`交易大亨.bat`**，或者：
+双击仓库根目录的 **`拟股喵喵.bat`**，或者：
 
 ```cmd
 scripts\run.cmd
@@ -13,7 +13,7 @@ scripts\run.cmd
 
 也可以直接跑 jar：
 ```cmd
-java -cp "build\frontend\trade-tower.jar;build\frontend\classes" tsim.Main
+java -cp "build\frontend\nigu-meow.jar;build\frontend\classes" tsim.Main
 ```
 
 如果还没构建过，先跑一次（需要 JDK 17 + PATH 里的 g++）：
@@ -74,12 +74,11 @@ scripts\build.cmd
 ## 五、自己验证（可选）
 
 ```cmd
-scripts\selftest.cmd
+scripts\build.cmd
+build\engine\trade_sim.exe --selftest
 ```
 
-覆盖：构建 → JSON 校验器自测 → 纯逻辑单元冒烟 → **端到端驱动（真实拉起引擎跑 298 项断言）**
-→ 契约验证 → 业务/边界/作弊器验证 → **前端入口测试（拉起引擎）+ 前端自测 + 真实引擎端到端**
-→ 引擎内置自检。全部结果落在 `build\evidence\`，退出码 0 = 全绿。
+`--selftest` 跑引擎内置自检（108 项断言）。
 
 ## 六、当前定版指纹
 

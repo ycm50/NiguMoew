@@ -60,6 +60,8 @@ public final class MainFrame extends JFrame {
     private final MarketTable marketTable = new MarketTable();
     private final KLineChart kline = new KLineChart();
     private final TickChart tickChart = new TickChart();
+    /** 左侧图表页签（K 线图 / 分时图）；切市场时需要跟着切页。 */
+    private final javax.swing.JTabbedPane chartTabs = new javax.swing.JTabbedPane();
     private final TradePanel tradePanel = new TradePanel();
     private final PositionPanel positionPanel = new PositionPanel();
     private final OrderPanel orderPanel = new OrderPanel();
@@ -83,7 +85,7 @@ public final class MainFrame extends JFrame {
 
     /** 构造主窗口（不启动引擎）。 */
     public MainFrame(EngineClient engine) {
-        super("交易大亨 · TradeTower  —  股票 / 外汇 模拟交易仿真器");
+        super("拟股喵喵  —  股票 / 外汇 模拟交易仿真器");
         this.engine = engine;
         setDefaultCloseOperation(DO_NOTHING_ON_CLOSE);
         setMinimumSize(new Dimension(1180, 720));
@@ -133,7 +135,6 @@ public final class MainFrame extends JFrame {
         left.setBackground(UITheme.PANEL);
         left.add(marketTable, BorderLayout.CENTER);
 
-        JTabbedPane chartTabs = new JTabbedPane();
         chartTabs.setFont(UITheme.SMALL_FONT);
         chartTabs.addTab("K 线图", kline);
         chartTabs.addTab("分时图", tickChart);
@@ -274,27 +275,44 @@ public final class MainFrame extends JFrame {
 
     private void bindHandlers() {
         marketTable.addSelectionListener((market, symbol) -> {
+            boolean marketChanged = !market.equals(selectedMarket);
             selectedMarket = market;
             selectedSymbol = symbol;
+            if (marketChanged) {
+                syncChartTabToMarket();
+            }
             updateCharts();
             updateTradePanel();
         });
         tradePanel.setOrderHandler(new TradePanel.OrderHandler() {
             @Override
-            public void onStockOrder(String side, String type, int qty, double price) {
-                doStockOrder(side, type, qty, price);
+            public void onStockOrder(String side, String type, int qty, double price, int leverage) {
+                doStockOrder(side, type, qty, price, leverage);
+            }
+
+            @Override
+            public void onStockShort(String action, String type, int qty, double price, int leverage) {
+                doStockShort(action, type, qty, price, leverage);
             }
 
             @Override
             public void onForexOpen(String side, int lots, int leverage, double stopLoss, double takeProfit) {
                 doForexOpen(side, lots, leverage, stopLoss, takeProfit);
             }
+
+            @Override
+            public void onForexClose(int positionId, int lots) {
+                doForexClose(positionId, lots);
+            }
         });
+        // 持仓行上的「平仓」按钮：直接调引擎平掉该持仓
+        tradePanel.setForexRowHandler((positionId, lots) ->
+                doForexClose(positionId, (int) lots));
         positionPanel.setCloseHandler((market, positionId, symbol, qty) -> {
             if ("forex".equals(market)) {
                 doForexClose(positionId, qty);
             } else {
-                doStockOrder("sell", "market", qty, 0);
+                doStockOrder("sell", "market", qty, 0, 1);
             }
         });
         orderPanel.setCancelHandler(this::doCancel);
@@ -442,6 +460,7 @@ public final class MainFrame extends JFrame {
         holdingsPanel.update(s);
         positionPanel.update(s.stockPositions, s.forexPositions);
         orderPanel.update(s.orders);
+        allOrders = s.orders;
         stockPositions = s.stockPositions;
         forexPositions = s.forexPositions;
         if (s.bankrupt) {
@@ -450,6 +469,7 @@ public final class MainFrame extends JFrame {
         updateTradePanelContext();
     }
 
+    private List<OrderInfo> allOrders = new ArrayList<>();
     private List<StockPosition> stockPositions = new ArrayList<>();
     private List<ForexPosition> forexPositions = new ArrayList<>();
 
@@ -553,16 +573,32 @@ public final class MainFrame extends JFrame {
             JsonDeserializer.StockQuote q = lastMarket.stock(selectedSymbol);
             if (q != null) {
                 kline.setQuote(q, 2);
+                // 分时图对股票同样喂数据，避免切页后看到上一只标的的旧图
+                tickChart.setBars(q.symbol, q.name, q.hist, q.prevClose, 2);
             } else {
                 kline.setSymbol(selectedSymbol, "");
+                tickChart.setSymbol(selectedSymbol, "");
             }
         } else {
             JsonDeserializer.ForexQuote q = lastMarket.forex(selectedSymbol);
             if (q != null) {
                 tickChart.setQuote(q);
+                // 外汇也有 hist：K 线图必须一并喂，否则停在上一只股票的图上（K 线不动）
+                kline.setForexQuote(q);
             } else {
                 tickChart.setSymbol(selectedSymbol, "");
+                kline.setSymbol(selectedSymbol, "");
             }
+        }
+    }
+
+    /** 切换市场时同步切换左侧图表页：股票看 K 线，外汇看分时。
+     *
+     * <p>只在市场真的变化时切页，避免用户手动选页后被每秒的 tick 强行拉回。</p> */
+    private void syncChartTabToMarket() {
+        int want = "stock".equals(selectedMarket) ? 0 : 1;
+        if (chartTabs.getSelectedIndex() != want) {
+            chartTabs.setSelectedIndex(want);
         }
     }
 
@@ -603,10 +639,20 @@ public final class MainFrame extends JFrame {
             } else {
                 tradePanel.setPositionContext(pos.qty, pos.avgCost, pos.pnl, pos.pnlPct, pos.todayBoughtQty);
             }
+            // 下半区：多头 + 空头持仓行（按浮动盈亏排序，带卖出/平仓按钮）
+            if (pos == null) {
+                tradePanel.setPositionRows(0, 0, 0, 0, 0, 0, 0, 0, 0);
+            } else {
+                tradePanel.setPositionRows(pos.qty, pos.avgCost, pos.pnl, pos.pnlPct, pos.todayBoughtQty,
+                        pos.shortQty, pos.shortAvgPrice, pos.shortPnl, pos.todayShortedQty);
+            }
         } else {
             // 外汇卡片：显示该货币对的持仓手数与浮动盈亏
             tradePanel.setForexPositionContext(forexPositionText(selectedSymbol),
                     forexPositionPnl(selectedSymbol));
+            // 下半区持仓行同样要刷成外汇，否则会留着上一次股票的「暂无持仓」，
+            // 与上方「多单 1 手 · 均价 …」自相矛盾（用户反馈「汇市订单完全不显示」）。
+            tradePanel.setForexRows(forexRowsOf(selectedSymbol));
         }
     }
 
@@ -664,6 +710,22 @@ public final class MainFrame extends JFrame {
         return sb.toString();
     }
 
+    /** 某个货币对的持仓行（多单 / 空单各一条，按持仓聚合成行）。 */
+    private java.util.List<TradePanel.ForexRow> forexRowsOf(String symbol) {
+        java.util.List<TradePanel.ForexRow> out = new java.util.ArrayList<>();
+        for (ForexPosition p : forexPositions) {
+            if (!p.symbol.equals(symbol)) {
+                continue;
+            }
+            double pnl = p.pnl + p.swap;
+            // 保证金收益率：以占用保证金为分母（外汇没有「股数」，用保证金口径最直观）
+            double pct = p.margin > 1e-9 ? pnl / p.margin : 0.0;
+            out.add(TradePanel.ForexRow.of(p.side, p.symbol, p.name,
+                    p.lots, p.openRate, pnl, pct, p.positionId));
+        }
+        return out;
+    }
+
     /** 某个货币对的浮动盈亏合计（含隔夜利息）。 */
     private double forexPositionPnl(String symbol) {
         double pnl = 0;
@@ -700,7 +762,7 @@ public final class MainFrame extends JFrame {
         }
     }
 
-    private void doStockOrder(String side, String type, int qty, double price) {
+    private void doStockOrder(String side, String type, int qty, double price, int leverage) {
         if (qty % 100 != 0 || qty <= 0) {
             Dialogs.error(this, "股票数量必须是 100 的整数倍（当前 " + qty + "）");
             return;
@@ -711,7 +773,7 @@ public final class MainFrame extends JFrame {
             return;
         }
         statusBar.setEngineStatus("正在下单 ...", true);
-        engine.tradeModel(side, sym, qty, type, price).whenComplete((tr, ex) -> SwingUtilities.invokeLater(() -> {
+        engine.tradeModel(side, sym, qty, type, price, leverage).whenComplete((tr, ex) -> SwingUtilities.invokeLater(() -> {
             statusBar.setEngineStatus("引擎运行中", true);
             if (ex != null) {
                 showTradeError(side, ex);
@@ -725,6 +787,38 @@ public final class MainFrame extends JFrame {
                     UITheme.money(tr.commission), UITheme.money(tr.cash)));
             afterTrade();
         }));
+    }
+
+    /** 股票做空 / 平空。 */
+    private void doStockShort(String action, String type, int qty, double price, int leverage) {
+        if (qty <= 0 || qty % 100 != 0) {
+            Dialogs.error(this, "股票数量必须是 100 的整数倍（当前 " + qty + "）");
+            return;
+        }
+        String sym = selectedSymbol;
+        if (sym == null || sym.isEmpty()) {
+            Dialogs.warn(this, "请先选择标的");
+            return;
+        }
+        statusBar.setEngineStatus("正在下单 ...", true);
+        engine.stockShortModel(action, sym, qty, type, price, leverage)
+                .whenComplete((res, ex) -> SwingUtilities.invokeLater(() -> {
+                    statusBar.setEngineStatus("引擎运行中", true);
+                    if (ex != null) {
+                        showTradeError(action, ex);
+                        return;
+                    }
+                    boolean isShort = "short".equals(action);
+                    Dialogs.success(this, String.format(java.util.Locale.ROOT,
+                            "%s %s\n成交：%d 股 @ %s\n手续费：%s\n%s：%s",
+                            isShort ? "做空卖出" : "平空买入", sym,
+                            Json.lng(res, "filled"), UITheme.price(Json.num(res, "avgPrice"), 2),
+                            UITheme.money(Json.num(res, "commission")),
+                            isShort ? "已冻结保证金" : "已实现盈亏",
+                            isShort ? UITheme.money(Json.num(res, "shortMargin"))
+                                    : UITheme.money(Json.num(res, "realizedPnl"))));
+                    afterTrade();
+                }));
     }
 
     private void doForexOpen(String side, int lots, int leverage, double stopLoss, double takeProfit) {
@@ -878,7 +972,7 @@ public final class MainFrame extends JFrame {
     }
 
     private void confirmExit() {
-        int r = JOptionPane.showConfirmDialog(this, "确定要退出交易大亨吗？", "退出确认",
+        int r = JOptionPane.showConfirmDialog(this, "确定要退出拟股喵喵吗？", "退出确认",
                 JOptionPane.OK_CANCEL_OPTION, JOptionPane.QUESTION_MESSAGE);
         if (r == JOptionPane.OK_OPTION) {
             refreshTimer.stop();
@@ -899,7 +993,7 @@ public final class MainFrame extends JFrame {
     }
 
     private static void showAbout() {
-        Dialogs.info(null, "交易大亨 · TradeTower  v1.0\n"
+        Dialogs.info(null, "拟股喵喵  v1.0\n"
                 + "C++ 引擎 + Java Swing 前端，本地单机运行。\n\n"
                 + UITheme.SIM_NOTICE + "。\n"
                 + "所有行情、新闻、账户均为程序生成的虚构数据，\n"

@@ -1,4 +1,4 @@
-// smoke.cpp - pure-logic smoke tests for the TradeTower engine.
+// smoke.cpp - pure-logic smoke tests for the NiguMeow (拟股喵喵) engine.
 //
 // Compiles standalone against the engine's own headers (they are header-only):
 //     g++ -std=c++17 -O2 -Wall -Wextra -I engine/src engine/tests/smoke.cpp -o smoke.exe
@@ -795,7 +795,7 @@ static void testHeaders() {
 
 int main() {
     std::printf("================================================================\n");
-    std::printf("TradeTower engine smoke test (pure logic)\n");
+    std::printf("拟股喵喵 engine smoke test (pure logic)\n");
     std::printf("================================================================\n");
 
     try {

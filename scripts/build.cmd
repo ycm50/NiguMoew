@@ -1,6 +1,6 @@
 @echo off
 rem ============================================================
-rem  TradeTower 交易大亨 - 全量构建
+rem  拟股喵喵 - build
 rem  用法: scripts\build.cmd [debug]
 rem ============================================================
 setlocal enabledelayedexpansion
@@ -75,15 +75,15 @@ if not "!JCERR!"=="0" ( echo [X] 前端编译失败 ^(exit !JCERR!^) & exit /b 1
 echo [OK] build\frontend\classes
 
 echo.
-echo === [4/5] 打包 trade-tower.jar =====
+echo === [4/5] 打包 nigu-meow.jar =====
 set "JAR=%JAVA_HOME%\bin\jar.exe"
 if not exist "!JAR!" set "JAR=A:\jdk-17.0.12\bin\jar.exe"
 if exist ""!JAR!"" (
   pushd "!BUILD!\frontend\classes"
-  "!JAR!" --create --file "!BUILD!\frontend\trade-tower.jar" --main-class tsim.Main .
+  "!JAR!" --create --file "!BUILD!\frontend\nigu-meow.jar" --main-class tsim.Main .
   set "JRERR=!errorlevel!"
   popd
-  if "!JRERR!"=="0" ( echo [OK] build\frontend\trade-tower.jar ) else ( echo [!] jar 打包失败，可忽略^(仍可用 class 目录启动^) )
+  if "!JRERR!"=="0" ( echo [OK] build\frontend\nigu-meow.jar ) else ( echo [!] jar 打包失败，可忽略^(仍可用 class 目录启动^) )
 )
 
 echo.
@@ -124,7 +124,6 @@ if exist "!ROOT!\tools\driver\driver.cpp" (
 echo.
 echo ============================================================
 echo  构建完成。运行: scripts\run.cmd
-echo  自测:     scripts\selftest.cmd
 echo ============================================================
 endlocal
 exit /b 0

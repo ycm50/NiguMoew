@@ -18,6 +18,7 @@ import javax.swing.JPanel;
 import javax.swing.SwingUtilities;
 
 import tsim.json.JsonDeserializer.Bar;
+import tsim.json.JsonDeserializer.ForexQuote;
 import tsim.json.JsonDeserializer.StockQuote;
 
 /**
@@ -92,6 +93,28 @@ public final class KLineChart extends JPanel {
         this.prevClose = q.prevClose;
         this.halted = q.halted;
         this.digits = digits <= 0 ? 2 : digits;
+        this.bars = new ArrayList<>(q.hist);
+        if (hoverIndex >= bars.size()) {
+            hoverIndex = -1;
+        }
+        repaint();
+    }
+
+    /** 直接喂数据（来自 MarketData 中的一条外汇行情）。
+     *
+     * <p>外汇同样有 {@code hist} K 线序列，此前 K 线图只接了股票，
+     * 导致切到外汇时 K 线图完全不刷新（用户反馈「汇市左侧 K 线不动」）。</p> */
+    public void setForexQuote(ForexQuote q) {
+        if (q == null) {
+            this.bars = new ArrayList<>();
+            repaint();
+            return;
+        }
+        this.symbol = q.symbol;
+        this.name = q.name;
+        this.prevClose = q.prevClose;
+        this.halted = false;
+        this.digits = q.digits <= 0 ? 4 : q.digits;
         this.bars = new ArrayList<>(q.hist);
         if (hoverIndex >= bars.size()) {
             hoverIndex = -1;

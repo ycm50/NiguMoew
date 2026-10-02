@@ -8,7 +8,6 @@ import java.awt.GridBagConstraints;
 import java.awt.GridBagLayout;
 import java.awt.Insets;
 import java.awt.event.ActionEvent;
-import java.util.Hashtable;
 
 import javax.swing.AbstractAction;
 import javax.swing.BorderFactory;
@@ -18,7 +17,7 @@ import javax.swing.Box;
 import javax.swing.JButton;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
-import javax.swing.JSlider;
+import javax.swing.JTextField;
 import javax.swing.SwingConstants;
 import javax.swing.Timer;
 
@@ -62,11 +61,12 @@ public final class ClockPanel extends JPanel {
         void onStep(int slots);
     }
 
-    private final JSlider slider = new JSlider(0, 1000, speedToSlider(1.0));
     private final JLabel speedLabel = new JLabel(" ");
     private final JLabel timeLabel = new JLabel("游戏时间 -");
     private final JLabel rateLabel = new JLabel(" ");
     private final JLabel uptimeLabel = new JLabel("已运行 0秒");
+    /** 目标速率输入框（天/秒）。 */
+    private JTextField rateField;
     private final JLabel stateLabel = new JLabel("状态：已暂停");
     private final javax.swing.JComboBox<Integer> tickMsBox =
             new javax.swing.JComboBox<>(new Integer[]{50, 100, 200, 500, 1000, 2000, 5000, 10000, 30000, 60000});
@@ -77,12 +77,13 @@ public final class ClockPanel extends JPanel {
     private ClockHandler handler;
     private boolean running;
     private long uptimeSeconds;
-    private int tickMs = 500;
+    /** 默认基准片间隔 1000ms（用户要求）。 */
+    private int tickMs = 1000;
     private double speed = 1.0;
     private int lastAdvancedSlots;
     private double slotsPerSecond;
     /** 引擎回显的实际片间隔（ms），权威值。 */
-    private double effectiveIntervalMs = 500;
+    private double effectiveIntervalMs = 1000;
 
     private final Timer uptimeTimer = new Timer(1000, e -> {
         if (running) {
@@ -99,32 +100,9 @@ public final class ClockPanel extends JPanel {
                 BorderFactory.createMatteBorder(1, 0, 0, 0, UITheme.WIDGET),
                 BorderFactory.createEmptyBorder(6, 10, 6, 10)));
 
-        slider.setBackground(UITheme.PANEL);
-        slider.setForeground(UITheme.TEXT);
-        slider.setMajorTickSpacing(125);
-        slider.setMinorTickSpacing(25);
-        slider.setPaintTicks(true);
-        slider.setPaintLabels(true);
-        slider.setFont(UITheme.SMALL_FONT);
-        Hashtable<Integer, JLabel> labels = new Hashtable<>();
-        for (double s : new double[]{0.25, 0.5, 1, 2, 4, 8, 16, 32, 64, 128, 256}) {
-            int pos = speedToSlider(s);
-            JLabel l = new JLabel(formatSpeed(s));
-            l.setFont(UITheme.font(Font.PLAIN, 9));
-            l.setForeground(UITheme.TEXT_DIM);
-            labels.put(Integer.valueOf(pos), l);
-        }
-        slider.setLabelTable(labels);
-        slider.setToolTipText("拖动即时改变时钟倍速（对数刻度）");
-        slider.addChangeListener(e -> {
-            // 滑动即时生效：立刻下发 clock set（越界由 clampSpeed 收敛到协议区间）
-            speed = clampSpeed(sliderToSpeed(slider.getValue()));
-            refreshSpeedLabels();
-            if (handler != null) {
-                handler.onSetSpeed(speed, tickMs);
-            }
-        });
-
+        // 倍速唯一的入口是右侧的「倍速输入框 + 应用」。
+        // 早期版本还有一个对数滑杆，滑杆的 ChangeListener 会在 setValue() 时回写 speed，
+        // 与输入框互相覆盖（输入 1 却显示 0.85x），故已移除，避免出现两个真相来源。
         tickMsBox.setFont(UITheme.SMALL_FONT);
         tickMsBox.setSelectedItem(Integer.valueOf(tickMs));
         tickMsBox.setToolTipText("引擎基准片间隔（毫秒）；实际片间隔 = tickMs / speed");
@@ -148,7 +126,10 @@ public final class ClockPanel extends JPanel {
         g.gridy = 0;
         g.weightx = 1;
         g.gridwidth = 2;
-        left.add(slider, g);
+        JLabel hint = new JLabel("倍速：在右侧输入框填写后按回车或点「应用」");
+        hint.setFont(UITheme.SMALL_FONT);
+        hint.setForeground(UITheme.TEXT_DIM);
+        left.add(hint, g);
         g.gridy++;
         JPanel info = new JPanel(new FlowLayout(FlowLayout.LEFT, 10, 0));
         info.setOpaque(false);
@@ -202,19 +183,26 @@ public final class ClockPanel extends JPanel {
         buttons.add(button("单步 1 天", () -> step(4)));
         buttons.add(button("快进 1 周", () -> step(20)));
 
-        // 低速预设：0.5 天/秒 等（用户要求）
-        buttons.add(Box.createHorizontalStrut(4));
-        buttons.add(presetButton("0.25天/秒", 0.2));
-        buttons.add(presetButton("0.5天/秒", 0.4));
-        buttons.add(presetButton("1天/秒", 0.8));
-        buttons.add(presetButton("2天/秒", 1.6));
-        buttons.add(Box.createHorizontalStrut(6));
-        buttons.setPreferredSize(new Dimension(700, 60));
+        // 倍速输入框：直接填倍速（x），按回车或点「应用」生效（用户要求统一成倍速）
+        rateField = new JTextField(6);
+        rateField.setFont(UITheme.SMALL_FONT);
+        rateField.setToolTipText("输入倍速（" + SPEED_MIN + " ~ " + SPEED_MAX + "），回车或点「应用」生效");
+        rateField.addActionListener(e -> applyRateInput());
+        buttons.add(rateField);
+
+        JLabel unit = new JLabel("x");
+        unit.setFont(UITheme.SMALL_FONT);
+        unit.setForeground(UITheme.TEXT);
+        buttons.add(unit);
+
+        buttons.add(button("应用", this::applyRateInput));
+        buttons.setPreferredSize(new Dimension(720, 60));
 
         add(left, BorderLayout.CENTER);
         add(buttons, BorderLayout.EAST);
         installSpaceKey(this);
         refreshStartPauseButton();
+        rateField.setText(formatSpeedForInput(speed));
         refreshSpeedLabels();
         uptimeTimer.start();
     }
@@ -234,21 +222,124 @@ public final class ClockPanel extends JPanel {
     }
 
     /**
-     * 低速预设按钮：按"天/秒"设定倍速。
+     * 应用倍速输入框：用户填的就是**倍速本身**（x），直接下发，不做单位换算。
      *
-     * <p>1 个交易日 = 4 个时间片，故 `天/秒 = 片/秒 ÷ 4`，即 `倍速 = 天/秒 × 4`。</p>
+     * <p>早期的"天/秒"输入需要 `倍速 = 天/秒 × 4 × tickMs / 1000` 的换算，
+     * 而换算结果一旦低于协议下限 `0.25x` 就会被夹住 —— 用户填 0.5 却得到 1.25，
+     * 看起来像 bug。现在统一以**倍速**为唯一单位，填多少就是多少，不会再有这种事。</p>
      *
-     * @param label   按钮文字
-     * @param daysPerSecond 目标推进速度（天/秒）
+     * <p>倍速与"天/秒"的关系（协议 §3.14）仍然展示在读数行里供参考：
+     * `天/秒 = (1000 / (tickMs / 倍速)) / 4`。</p>
      */
-    private JButton presetButton(String label, double daysPerSecond) {
-        JButton b = button(label, () -> {
-            double target = clampSpeed(daysPerSecond * 4.0);
-            // 设置滑杆即可；其 ChangeListener 会立即下发 clock set（协议 §3.14）
-            slider.setValue(speedToSlider(target));
-        });
-        b.setToolTipText("将倍速设为约 " + label + "（≈ " + String.format("%.2f", daysPerSecond * 4.0) + "x）");
-        return b;
+    private void applyRateInput() {
+        String raw = rateField.getText() == null ? "" : rateField.getText().trim();
+        if (raw.isEmpty()) {
+            Dialogs.warn(this, "请输入倍速，例如 0.5 或 64。");
+            rateField.setText(formatSpeedForInput(speed));
+            return;
+        }
+        // 允许用户连"x"一起输入，如 "0.5x" / "64X"
+        if (raw.endsWith("x") || raw.endsWith("X")) {
+            raw = raw.substring(0, raw.length() - 1).trim();
+        }
+        double want;
+        try {
+            want = Double.parseDouble(raw);
+        } catch (NumberFormatException ex) {
+            Dialogs.warn(this, "\"" + rateField.getText() + "\" 不是合法数字。请输入如 0.5 或 64 的倍速。");
+            rateField.setText(formatSpeedForInput(speed));
+            return;
+        }
+        if (!(want > 0) || Double.isInfinite(want) || Double.isNaN(want)) {
+            Dialogs.warn(this, "倍速必须大于 0。");
+            rateField.setText(formatSpeedForInput(speed));
+            return;
+        }
+
+        // 超出协议区间时夹住并如实提示（区间来自 PROTOCOL.md §3.14）
+        double target = clampSpeed(want);
+        speed = target;
+        refreshSpeedLabels();
+        rateField.setText(formatSpeedForInput(target));
+        if (handler != null) {
+            handler.onSetSpeed(speed, tickMs);
+        }
+
+        if (Math.abs(target - want) > 1e-9) {
+            Dialogs.info(this,
+                    "协议允许的倍速区间是 [" + SPEED_MIN + ", " + SPEED_MAX + "]x，"
+                            + UITheme.price(want, 4) + "x 已超出。\n\n"
+                            + "已按 " + formatSpeedForInput(target) + " 应用（此时 "
+                            + rateLabelText(target) + "）。");
+        }
+    }
+
+    /** 输入框显示用：简洁的倍速文本（不带 x 后缀，单位在框外）。 */
+    static String formatSpeedForInput(double s) {
+        if (s == Math.rint(s)) {
+            return String.valueOf((long) s);
+        }
+        return String.format(java.util.Locale.ROOT, "%s", trimZeros(UITheme.price(s, 3)));
+    }
+
+    /** 去掉小数末尾多余的 0，如 "0.500" -> "0.5"。 */
+    private static String trimZeros(String s) {
+        if (s.indexOf('.') < 0) {
+            return s;
+        }
+        int end = s.length();
+        while (end > 0 && s.charAt(end - 1) == '0') {
+            end--;
+        }
+        if (end > 0 && s.charAt(end - 1) == '.') {
+            end--;
+        }
+        return s.substring(0, end);
+    }
+
+    /** 形如 "片间隔 50.00 ms → 20.00 片/秒 → 5.00 天/秒"。 */
+    private String rateLabelText(double spd) {
+        double interval = tickMs / Math.max(0.0001, spd);
+        double sps = interval <= 0 ? 0 : 1000.0 / interval;
+        return String.format(java.util.Locale.ROOT,
+                "片间隔 %.2f ms → %.2f 片/秒 → %.2f 天/秒", interval, sps, sps / 4.0);
+    }
+
+    /** 给定倍速与基准片间隔时，每秒推进多少个时间片。 */
+    static double slotsPerSecondFor(double speed, double baseMs) {
+        if (baseMs <= 0) {
+            return 0;
+        }
+        return speed * 1000.0 / baseMs;
+    }
+
+    /**
+     * 为指定"天/秒"推荐一个基准片间隔，使所需倍速落在协议区间 [0.25, 256] 内。
+     *
+     * <p>`speed = 天/秒 × 4 × tickMs / 1000`，令其 &gt;= 0.25 得 `tickMs &gt;= 62.5 / 天/秒`。</p>
+     */
+    static int suggestedTickMs(double daysPerSecond) {
+        int[] allowed = {50, 100, 200, 500, 1000, 2000, 5000, 10000, 30000, 60000};
+        double need = Math.ceil(62.5 / Math.max(daysPerSecond, 1e-9));
+        for (int a : allowed) {
+            if (a >= need) {
+                return a;
+            }
+        }
+        return 60000;
+    }
+
+    /**
+     * 把"天/秒"换算成引擎倍速。
+     *
+     * <pre>倍速 = 天/秒 × 4 × tickMs / 1000</pre>
+     *
+     * @param daysPerSecond 目标推进速度（天/秒）
+     * @param baseMs        基准片间隔（毫秒）
+     * @return 引擎倍速（未做区间收敛）
+     */
+    static double daysPerSecondToSpeed(double daysPerSecond, double baseMs) {
+        return daysPerSecond * 4.0 * baseMs / 1000.0;
     }
 
     /** 刷新开始/暂停按钮的文案与颜色（运行中 = 红，暂停 = 绿）。 */
@@ -347,7 +438,6 @@ public final class ClockPanel extends JPanel {
         // 引擎回显的 tickIntervalMs 才是"实际生效值"（可能被 clamp/取整），绝不用 tickMs/speed 重算
         this.effectiveIntervalMs = st.tickIntervalMs;
         this.slotsPerSecond = st.slotsPerSecond();
-        slider.setValue(speedToSlider(this.speed));
         Object sel = tickMsBox.getSelectedItem();
         if (!(sel instanceof Integer) || ((Integer) sel).intValue() != this.tickMs) {
             tickMsBox.setSelectedItem(Integer.valueOf(this.tickMs));
@@ -387,11 +477,6 @@ public final class ClockPanel extends JPanel {
         return tickMs;
     }
 
-    /** 滑杆当前值（测试用）。 */
-    public int sliderValue() {
-        return slider.getValue();
-    }
-
     /** 已运行秒数（测试用）。 */
     public long uptime() {
         return uptimeSeconds;
@@ -406,6 +491,17 @@ public final class ClockPanel extends JPanel {
                 "片间隔 %.2f ms → %.2f 片/秒 → %.2f 天/秒", est, sps, sps / 4.0));
         if (lastAdvancedSlots > 0) {
             timeLabel.setToolTipText("上次推进 " + lastAdvancedSlots + " 片");
+        }
+        seedRateFieldIfEmpty(speed);
+    }
+
+    /** 输入框为空时，用当前倍速做占位提示（不覆盖用户已输入的值）。 */
+    private void seedRateFieldIfEmpty(double spd) {
+        if (rateField == null) {
+            return;
+        }
+        if (rateField.getText() == null || rateField.getText().isBlank()) {
+            rateField.setText(formatSpeedForInput(spd));
         }
     }
 
@@ -456,28 +552,6 @@ public final class ClockPanel extends JPanel {
     /** 引擎回显的实际片间隔（ms）。 */
     double effectiveIntervalMs() {
         return effectiveIntervalMs;
-    }
-
-    /** 对数刻度：0..1000 -> 0.25..256。 */
-    static int speedToSlider(double speed) {
-        double s = Math.max(SPEED_MIN, Math.min(SPEED_MAX, speed));
-        double t = (Math.log(s) - Math.log(SPEED_MIN)) / (Math.log(SPEED_MAX) - Math.log(SPEED_MIN));
-        return (int) Math.round(t * 1000);
-    }
-
-    /** 对数刻度：0..1000 -> 0.25..256。 */
-    static double sliderToSpeed(int value) {
-        double t = Math.max(0, Math.min(1000, value)) / 1000.0;
-        double s = Math.exp(Math.log(SPEED_MIN) + t * (Math.log(SPEED_MAX) - Math.log(SPEED_MIN)));
-        return roundNice(s);
-    }
-
-    /** 吸附到易读的档位（0.05 精度，>=10 取整）。 */
-    private static double roundNice(double s) {
-        if (s >= 10) {
-            return Math.round(s);
-        }
-        return Math.round(s * 20.0) / 20.0;
     }
 
     /**

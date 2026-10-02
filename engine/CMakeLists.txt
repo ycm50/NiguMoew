@@ -1,5 +1,5 @@
 # =============================================================================
-# engine/CMakeLists.txt - TradeTower simulation engine
+# engine/CMakeLists.txt - NiguMeow simulation engine
 #
 # Two ways to build are supported and they must stay equivalent:
 #
@@ -24,7 +24,7 @@ cmake_minimum_required(VERSION 3.16)
 
 project(TradeSim
         VERSION 1.0.0
-        DESCRIPTION "TradeTower simulation engine (stocks / forex / T+1 / cheats)"
+        DESCRIPTION "NiguMeow simulation engine (stocks / forex / T+1 / cheats)"
         LANGUAGES CXX)
 
 # ---------------------------------------------------------------- options ---

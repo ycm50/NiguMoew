@@ -50,7 +50,7 @@ public final class RealEngineAcceptance {
 
     /** 运行。 */
     public static void main(String[] args) throws Exception {
-        System.out.println("==== TradeTower 真实引擎端到端验收（headless）====");
+        System.out.println("==== 拟股喵喵 真实引擎端到端验收（headless）====");
         System.out.println("工作目录: " + Paths.get("").toAbsolutePath());
         Path exe = EngineClient.discoverEnginePath();
         System.out.println("探测到引擎: " + exe);

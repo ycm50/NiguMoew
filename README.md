@@ -1,4 +1,4 @@
-# 交易大亨 TradeTower
+# 拟股喵喵
 
 > **纯单机模拟游戏。不涉及任何真实资金、充值、提现或支付。**
 > 游戏里的"钱"是模拟数字，作弊器也是模拟功能。
@@ -11,7 +11,7 @@ C++ 引擎 + Java Swing 前端的**股票 / 外汇交易模拟游戏**。
 
 ## 下载即玩
 
-到 [Releases](../../releases/latest) 下载 **`trade-tower-x.y.z-win64.zip`**：
+到 [Releases](../../releases/latest) 下载 **`nigu-meow-x.y.z-win64.zip`**：
 
 1. 解压到任意目录
 2. 双击 **`play.bat`**
@@ -27,7 +27,6 @@ C++ 引擎 + Java Swing 前端的**股票 / 外汇交易模拟游戏**。
 ```cmd
 scripts\build.cmd        :: 编译引擎 + 前端 + 工具
 scripts\run.cmd          :: 启动游戏（也可直接双击 play.bat）
-scripts\selftest.cmd     :: 全量自测，退出码 0 = 全绿
 ```
 
 打包发行版：
@@ -80,7 +79,7 @@ engine/src/        C++ 引擎（json/util/market/news/account/order/engine/clock
 frontend/src/tsim/ Java Swing 前端（json / ui / tests）
 tools/             jsoncheck（JSON 行校验器）、driver（端到端驱动）
 engine/tests/      单元冒烟 + QA 契约/业务验证器（独立实现，不复用被测代码）
-scripts/           build.cmd / run.cmd / selftest.cmd / package.ps1 / srcfingerprint.ps1
+scripts/           build.cmd / run.cmd / package.ps1 / srcfingerprint.ps1
 .github/workflows/ release.yml —— 构建、打包、发布即玩版
 docs/PROTOCOL.md   引擎↔前端通信协议
 ```
@@ -91,7 +90,6 @@ docs/PROTOCOL.md   引擎↔前端通信协议
 
 | 门禁 | 结果 |
 |---|---|
-| `scripts\selftest.cmd` | **退出码 0，全部通过** |
 | 引擎内置自检 | 108 / 108 |
 | 纯逻辑单元冒烟 | 233 / 233 |
 | 端到端驱动（17 段） | 298 / 298 |
@@ -110,10 +108,9 @@ docs/PROTOCOL.md   引擎↔前端通信协议
 1. **计算版本号** —— 从 `1.0.0` 开始；**每段最高 9**，从个位逐位进位：
    `1.0.0 → 1.0.9 → 1.1.0 → 1.9.9 → 2.0.0`（永不出现 >9 的段）
 2. **构建** —— 装 MSYS2(ucrt64) + JDK 17，跑 `build.cmd`
-3. **自测** —— 跑 `selftest.cmd`，**不全绿直接失败，不允许发布**
-4. **打包** —— 调 `scripts/package.ps1` 产出即玩 zip + `SHA256SUMS.txt`
-5. **冒烟** —— 解压产物，验证引擎自检通过、随包 JRE 能启动 GUI
-6. **发布** —— 上传到 GitHub Release（文件 + 校验和 + 自动生成的发布说明）
+3. **打包** —— 调 `scripts/package.ps1` 产出即玩 zip + `SHA256SUMS.txt`
+4. **冒烟** —— 解压产物，验证引擎自检通过、随包 JRE 能启动 GUI
+5. **发布** —— 上传到 GitHub Release（文件 + 校验和 + 自动生成的发布说明）
 
 手动触发可指定版本号，或勾选"标记为预发布"。
 

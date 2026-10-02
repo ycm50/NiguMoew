@@ -151,6 +151,16 @@ public final class JsonDeserializer {
         public final double pnlPct;
         /** 当日买入（T+1 锁定）数量。 */
         public final int todayBoughtQty;
+        /** 做空：空头股数（0 = 无空头）。 */
+        public final long shortQty;
+        /** 做空：开空均价。 */
+        public final double shortAvgPrice;
+        /** 做空：已冻结保证金。 */
+        public final double shortMargin;
+        /** 做空：浮动盈亏。 */
+        public final double shortPnl;
+        /** 做空：当日开空（T+1 锁定）。 */
+        public final long todayShortedQty;
 
         private StockPosition(Map<String, Object> o) {
             symbol = Json.str(o, "symbol");
@@ -163,6 +173,11 @@ public final class JsonDeserializer {
             pnl = Json.num(o, "pnl");
             pnlPct = Json.num(o, "pnlPct");
             todayBoughtQty = (int) Json.lng(o, "todayBoughtQty");
+            shortQty = Json.lng(o, "shortQty");
+            shortAvgPrice = Json.num(o, "shortAvgPrice");
+            shortMargin = Json.num(o, "shortMargin");
+            shortPnl = Json.num(o, "shortPnl");
+            todayShortedQty = Json.lng(o, "todayShortedQty");
         }
 
         /** 解析。 */
@@ -779,6 +794,16 @@ public final class JsonDeserializer {
         public final int orderId;
         /** 账户（bankrupt/margin_call 事件携带）。 */
         public final String account;
+        /** 强平事件子类型：warn（仅预警）/ liquidate（已强平）。协议 v1.0.5。 */
+        public final String mode;
+        /** 强平数量（股票强平携带，单位：股；与外汇 lots 区分）。 */
+        public final long qtyL;
+        /** 浮动盈亏（预警事件携带，负数表示浮亏）。 */
+        public final double floatPnl;
+        /** 事件是否真的携带 loss 字段（区分"没有该字段"与"loss 恰为 0"）。 */
+        public final boolean hasLoss;
+        /** 事件是否真的携带 floatPnl 字段。 */
+        public final boolean hasFloatPnl;
         /** 原始 JSON。 */
         public final Map<String, Object> raw;
 
@@ -799,6 +824,11 @@ public final class JsonDeserializer {
             loss = Json.num(o, "loss");
             orderId = (int) Json.lng(o, "orderId");
             account = Json.str(o, "account");
+            mode = Json.str(o, "mode");
+            qtyL = Json.lng(o, "qty");
+            hasLoss = o != null && o.containsKey("loss");
+            hasFloatPnl = o != null && o.containsKey("floatPnl");
+            floatPnl = Json.num(o, "floatPnl");
         }
 
         /** 解析。 */
@@ -862,10 +892,27 @@ public final class JsonDeserializer {
                     break;
                 case "margin_call":
                     sb.append("  保证金水平 ").append(String.format(java.util.Locale.ROOT, "%.2f%%", level));
+                    if (symbol != null && !symbol.isEmpty()) {
+                        sb.append("  ").append(symbol);
+                    }
                     if (lots() > 0) {
                         sb.append("  强平 ").append(lots()).append(" 手");
+                    } else if (qtyL > 0) {
+                        sb.append("  强平 ").append(qtyL).append(" 股");
                     }
-                    sb.append("  亏损 ").append(loss);
+                    // loss 是"保证金缺口"（预警，恒非负）或"本笔实际亏损"（强平，负数为亏）。
+                    // 以前无条件打印 "亏损 0.0" —— 字段缺失时也照打，误导用户以为没亏钱。
+                    // 现在只在事件确实携带 loss 时才显示。
+                    if (hasLoss) {
+                        if ("warn".equals(mode)) {
+                            sb.append("  需补充 ").append(fmtMoney(loss));
+                        } else {
+                            sb.append("  本次亏损 ").append(fmtMoney(loss));
+                        }
+                    }
+                    if (hasFloatPnl) {
+                        sb.append("  浮动盈亏 ").append(fmtMoney(floatPnl));
+                    }
                     break;
                 case "bankrupt":
                     sb.append("  账户 ").append(accountText());
@@ -886,6 +933,11 @@ public final class JsonDeserializer {
                 sb.append("  「").append(title).append('】');
             }
             return sb.toString();
+        }
+
+        /** 金额格式化（千分位 + 2 位小数，超长自动折行不适用，这里只做数值展示）。 */
+        private static String fmtMoney(double v) {
+            return String.format(java.util.Locale.ROOT, "%,.2f", v);
         }
 
         /** 部分成交事件的已成交数量：qty 字段在 order_partial 里表示本次成交量。 */
