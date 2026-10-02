@@ -59,14 +59,19 @@ public final class CheatPanel extends JPanel {
     private final JTextField setCashValue = new JTextField("5000000", 10);
     private final JComboBox<String> setCashAccount = new JComboBox<>(new String[]{"股票", "外汇"});
     // 价格
-    private final JTextField priceSymbol = new JTextField(9);
+    /**
+     * 「② 行情控制」整段共用的代码框（改价 / 拉砸 / 停牌 / 按比例涨跌都用它）。
+     *
+     * <p>原先每个功能各有一个「代码」框，四个框要重复填同一个代码，很啰嗦；
+     * 而且 Swing 组件只能有一个父容器，一旦某个实例被 add 进两行，
+     * 第二次 add 会把它从第一行移走（曾导致「强制改价到」一行输入框消失）。
+     * 现在收成一个共享字段，放在该段标题下面，只填一次。</p> */
+    private final JTextField marketSymbol = new JTextField(9);
     private final JTextField priceTo = new JTextField(8);
     private final JTextField pricePct = new JTextField(8);
-    private final JTextField pumpSymbol = new JTextField(9);
     private final JTextField pumpPct = new JTextField("0.1", 6);
     private final JTextField pumpBars = new JTextField("5", 4);
-    // 停牌
-    private final JTextField freezeSymbol = new JTextField(9);
+    // 停牌（代码框用上面的共享 marketSymbol）
     private final JCheckBox freezeOn = new JCheckBox("停牌（取消勾选=复牌）", true);
     // T+1
     private final JTextField unlockSymbol = new JTextField(9);
@@ -126,18 +131,23 @@ public final class CheatPanel extends JPanel {
         g.gridy++;
         content.add(section("② 行情控制"), g);
         g.gridy++;
-        content.add(line("代码", priceSymbol, "强制改价到", priceTo, button("改价", this::doPriceTo)), g);
+        // 整段共用一个代码框：下面的改价 / 拉砸 / 停牌 / 按比例涨跌都作用于它
+        content.add(line("代码（以下操作都作用于它）", marketSymbol,
+                new JLabel("留空=全部（停牌/涨跌比例支持留空）")), g);
         g.gridy++;
-        content.add(line("代码", pumpSymbol, "涨跌幅", pumpPct, "持续片数", pumpBars, button("拉盘/砸盘", this::doPump)), g);
+        content.add(line("强制改价到", priceTo, button("改价", this::doPriceTo)), g);
         g.gridy++;
-        content.add(line("代码", freezeSymbol, " ", freezeOn, button("应用停牌/复牌", this::doFreeze)), g);
+        content.add(line("涨跌幅", pumpPct, "持续片数", pumpBars, button("拉盘/砸盘", this::doPump)), g);
         g.gridy++;
-        content.add(line("代码", priceSymbol, "涨跌比例", pricePct, button("按比例涨跌", this::doPricePct)), g);
+        content.add(line("", freezeOn, button("应用停牌/复牌", this::doFreeze)), g);
+        g.gridy++;
+        content.add(line("涨跌比例", pricePct, button("按比例涨跌", this::doPricePct)), g);
 
         g.gridy++;
         content.add(section("③ T+1"), g);
         g.gridy++;
         content.add(line("代码", unlockSymbol, new JLabel("留空=解锁全部"), button("解锁 T+1", this::doUnlock)), g);
+        // 注：T+1 解锁的代码框与 ② 段分开（解锁对象常与改价对象不同），保持独立。
         g.gridy++;
         content.add(line(t1Enabled, button("应用 T+1 开关", this::applyToggles)), g);
 
@@ -207,9 +217,8 @@ public final class CheatPanel extends JPanel {
             c.setOpaque(false);
             c.setForeground(UITheme.TEXT);
         }
-        for (JTextField f : new JTextField[]{moneyAmount, setCashValue, priceSymbol, priceTo, pricePct,
-                pumpSymbol, pumpPct, pumpBars, freezeSymbol, unlockSymbol, seedField, newsTitle, newsImpact,
-                newsSymbols}) {
+        for (JTextField f : new JTextField[]{moneyAmount, setCashValue, marketSymbol, priceTo, pricePct,
+                pumpPct, pumpBars, unlockSymbol, seedField, newsTitle, newsImpact, newsSymbols}) {
             f.setFont(UITheme.SMALL_FONT);
             f.setBackground(UITheme.PANEL_DARK);
             f.setForeground(UITheme.TEXT);
@@ -301,24 +310,81 @@ public final class CheatPanel extends JPanel {
         send(Json.obj("op", "reset"));
     }
 
+    /**
+     * 取共享代码框里的代码；为空时给出明确提示并返回 null。
+     *
+     * <p>这四项操作（改价 / 按比例涨跌 / 拉砸 / 停牌）引擎都**必须**要有 symbol，
+     * 为空会直接回 {@code BAD_ARG: 参数错误: 缺少 symbol}。此前没有本地校验，
+     * 用户漏填就会看到一个引擎报错弹窗（体验上像程序出错）。
+     * 现在在客户端先拦一次，提示该填什么。只有「解锁 T+1」允许留空。</p>
+     */
+    private String requireSymbol(String what) {
+        String sym = marketSymbol.getText() == null ? "" : marketSymbol.getText().trim();
+        if (sym.isEmpty()) {
+            Dialogs.warn(this, "请先在「② 行情控制」顶部填写代码，再执行「" + what + "」。\n\n"
+                    + "例如 SH600519（股票）或 USDJPY（外汇）。\n"
+                    + "（只有「解锁 T+1」可以留空，表示解锁全部）");
+            marketSymbol.requestFocusInWindow();
+            return null;
+        }
+        return sym;
+    }
+
+    /**
+     * 由外部（导航：行情表选中某标的时）同步共享代码框。
+     *
+     * <p>只在该框为空或内容等于上一次自动填入值时覆盖，避免把用户手输的代码冲掉。</p>
+     */
+    public void setMarketSymbol(String symbol) {
+        String s = symbol == null ? "" : symbol.trim();
+        if (s.isEmpty()) {
+            return;
+        }
+        String cur = marketSymbol.getText() == null ? "" : marketSymbol.getText().trim();
+        if (cur.isEmpty() || cur.equals(autoFilledSymbol)) {
+            marketSymbol.setText(s);
+            marketSymbol.setCaretPosition(0);
+        }
+        autoFilledSymbol = s;
+    }
+
+    /** 上一次由选中标的自动填入的代码（用于判断能否安全覆盖）。 */
+    private String autoFilledSymbol = "";
+
     private void doPriceTo() {
-        send(Json.obj("op", "price", "symbol", priceSymbol.getText().trim(),
+        String sym = requireSymbol("强制改价");
+        if (sym == null) {
+            return;
+        }
+        send(Json.obj("op", "price", "symbol", sym,
                 "to", parseDouble(priceTo.getText(), 0)));
     }
 
     private void doPricePct() {
-        send(Json.obj("op", "price", "symbol", priceSymbol.getText().trim(),
+        String sym = requireSymbol("按比例涨跌");
+        if (sym == null) {
+            return;
+        }
+        send(Json.obj("op", "price", "symbol", sym,
                 "pct", parseDouble(pricePct.getText(), 0)));
     }
 
     private void doPump() {
-        send(Json.obj("op", "pump", "symbol", pumpSymbol.getText().trim(),
+        String sym = requireSymbol("拉盘/砸盘");
+        if (sym == null) {
+            return;
+        }
+        send(Json.obj("op", "pump", "symbol", sym,
                 "pct", parseDouble(pumpPct.getText(), 0.1),
                 "bars", Math.round(parseDouble(pumpBars.getText(), 5))));
     }
 
     private void doFreeze() {
-        send(Json.obj("op", "freeze", "symbol", freezeSymbol.getText().trim(),
+        String sym = requireSymbol("停牌/复牌");
+        if (sym == null) {
+            return;
+        }
+        send(Json.obj("op", "freeze", "symbol", sym,
                 "halted", Boolean.valueOf(freezeOn.isSelected())));
     }
 

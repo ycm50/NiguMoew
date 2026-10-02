@@ -1,4 +1,4 @@
-// driver.cpp - end-to-end driver for TradeTower's trade_sim.exe --stdio.
+// driver.cpp - end-to-end driver for 拟股喵喵's trade_sim.exe --stdio.
 //
 // Spawns the real engine with CreateProcessW + anonymous pipes, feeds it a
 // scripted request sequence, and verifies the v1 protocol contract:
@@ -913,7 +913,7 @@ int main(int argc, char** argv) {
     }
 
     logLine("================================================================");
-    logLine("TradeTower end-to-end driver   " + nowStamp());
+    logLine("拟股喵喵 end-to-end driver   " + nowStamp());
     logLine("root        : " + root);
     logLine("engine argv : trade_sim.exe --stdio");
     logLine("seed        : " + std::to_string(seed));

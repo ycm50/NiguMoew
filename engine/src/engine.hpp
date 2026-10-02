@@ -153,6 +153,12 @@ public:
     int tradeCount = 0;
     // 破产标志：时钟线程与 stdin 线程都会读写；用 std::atomic 避免数据竞争
     std::atomic<bool> bankruptStock{false};
+    /** 是否已就股票融资发出过追加保证金提醒（回到安全线后复位）。 */
+    bool stockCalled = false;
+    /** 最近一次做空的标的（供前端提示用）。 */
+    std::string lastShortedSymbol;
+    /** 是否已就融券发出过追加保证金提醒。 */
+    bool stockShortCalled = false;
     std::atomic<bool> bankruptForex{false};
     double dividendTotal = 0.0;
     double sessionDayStartEquity = 0.0;
@@ -186,6 +192,8 @@ public:
         tradeCount = 0;
         bankruptStock = false;
         bankruptForex = false;
+        stockCalled = false;
+        stockShortCalled = false;
         bankruptPushed = false;
         dividendTotal = 0.0;
         renewQueue.clear();
@@ -327,6 +335,7 @@ public:
             const bool known = (cmd == "hello" || cmd == "ping" || cmd == "newgame" || cmd == "reset" ||
                                 cmd == "status" || cmd == "tick" || cmd == "snapshot" || cmd == "market" ||
                                 cmd == "quote" || cmd == "buy" || cmd == "sell" || cmd == "cancel" ||
+            cmd == "short" || cmd == "cover" ||
                                 cmd == "forex" || cmd == "fx" || cmd == "open" || cmd == "close" ||
                                 cmd == "openposition" || cmd == "closeposition" ||
                                 cmd == "orders" || cmd == "history" ||
@@ -347,6 +356,9 @@ public:
             if (cmd == "quote")    { r.data = cmdQuote(a);    return normalize(r); }
             if (cmd == "buy")      { r.data = stockOrder(a, "buy");  return normalize(r); }
             if (cmd == "sell")     { r.data = stockOrder(a, "sell"); return normalize(r); }
+            // 融券做空（协议 v1.0.4）：short = 开空，cover = 平空
+            if (cmd == "short")    { r.data = stockShort(a);  return normalize(r); }
+            if (cmd == "cover")    { r.data = stockCover(a);  return normalize(r); }
             if (cmd == "cancel")   { r.data = cmdCancel(a);   return normalize(r); }
             if (cmd == "forex" || cmd == "fx" || cmd == "trade_forex") { r.data = cmdForex(a); return normalize(r); }
             if (cmd == "open" || cmd == "openposition")  { Json fa = a; fa["op"] = Json("open");  r.data = cmdForex(fa); return normalize(r); }
@@ -395,10 +407,101 @@ public:
     double forexEquity() const {
         return round2(forexAcc.cash + forexAcc.floatPnl() + forexAcc.swapSum());
     }
+    /** 股票账户总负债（融资买入未偿还部分）。 */
+    double stockMarginDebt() const {
+        double v = 0.0;
+        for (const StockPosition& p : stockAcc.positions) v += p.marginDebt;
+        return round2(v);
+    }
+
+    /** 做空浮动盈亏合计：空头 (开仓价 − 现价) × 股数。 */
+    double stockShortPnl() const {
+        double v = 0.0;
+        for (const StockPosition& p : stockAcc.positions) {
+            if (p.shortQty <= 0) continue;
+            const Stock* s = constStock(p.symbol);
+            double last = s ? s->last : p.shortAvgPrice;
+            v += (p.shortAvgPrice - last) * static_cast<double>(p.shortQty);
+        }
+        return round2(v);
+    }
+
+    /** 做空已冻结的保证金合计（属于自有资金，仍计入权益）。 */
+    double stockShortMargin() const {
+        double v = 0.0;
+        for (const StockPosition& p : stockAcc.positions) v += p.shortMargin;
+        return round2(v);
+    }
+
+    /**
+     * 股票权益 = 现金 + 冻结 + 多头市值 − 融资负债 + 做空保证金 + 做空浮盈。
+     *
+     * <p>做空保证金已从 cash 中扣除，这里加回来（它仍是自有资金）；
+     * 做空浮盈则是真正的盈亏。</p>
+     */
     double stockEquity() const {
-        return round2(stockAcc.cash + stockAcc.frozen + stockMarketValue());
+        return round2(stockAcc.cash + stockAcc.frozen + stockMarketValue() - stockMarginDebt()
+                      + stockShortMargin() + stockShortPnl());
     }
     double totalEquity() const { return round2(stockEquity() + forexEquity()); }
+
+    // ---------- 股票融资风控（协议 v1.0.3）----------
+    // 维持保证金率 = (持仓市值 + 冻结 − 负债) / (持仓市值 + 冻结) * 100
+    //   即"自有权益占持仓市值的比例"。无融资负债时为 100%。
+    // 跌破 STOCK_CALL_LEVEL(25%) 触发追缴；跌破 STOCK_FORCE_LEVEL(20%) 强制平仓。
+    static constexpr double STOCK_CALL_LEVEL = 25.0;
+    static constexpr double STOCK_FORCE_LEVEL = 20.0;
+
+    /** 股票持仓的浮动盈亏合计（多头市值 − 多头成本）。 */
+    double stockFloatPnl() const {
+        double v = 0.0;
+        for (const StockPosition& p : stockAcc.positions) {
+            if (p.qty <= 0) continue;
+            const Stock* s = constStock(p.symbol);
+            double last = s ? s->last : p.avgCost;
+            v += (last - p.avgCost) * static_cast<double>(p.qty);
+        }
+        return round2(v);
+    }
+
+    /**
+     * 融资维持保证金缺口：把保证金率补回 25% 所需的**自有资金**（恒为非负）。
+     *
+     * <p>= 目标权益 − 当前权益 = 0.25 × 总市值 − (总市值 − 负债)。</p>
+     */
+    double stockMarginShortfall() const {
+        double gross = round2(stockMarketValue() + stockAcc.frozen);
+        if (gross <= 1e-9) return 0.0;
+        double debt = stockMarginDebt();
+        if (debt <= 1e-9) return 0.0;
+        double own = gross - debt;
+        double need = round2(STOCK_CALL_LEVEL / 100.0 * gross);
+        double gap = round2(need - own);
+        return gap > 0.0 ? gap : 0.0;
+    }
+
+    /** 融券维持保证金缺口：补回 25% 所需的自有资金（恒为非负）。 */
+    double shortMarginShortfall() const {
+        double notional = 0.0;
+        for (const StockPosition& p : stockAcc.positions) {
+            if (p.shortQty > 0) notional += p.shortAvgPrice * static_cast<double>(p.shortQty);
+        }
+        if (notional <= 1e-9) return 0.0;
+        double own = round2(stockShortMargin() + stockShortPnl());
+        double need = round2(STOCK_CALL_LEVEL / 100.0 * notional);
+        double gap = round2(need - own);
+        return gap > 0.0 ? gap : 0.0;
+    }
+
+    /** 股票维持保证金率（%）；无持仓或无负债时返回 100。 */
+    double stockMarginLevel() const {
+        double gross = round2(stockMarketValue() + stockAcc.frozen);
+        if (gross <= 1e-9) return 100.0;
+        double debt = stockMarginDebt();
+        if (debt <= 1e-9) return 100.0;
+        double own = gross - debt;
+        return round2(own / gross * 100.0);
+    }
 
     const Stock* constStock(const std::string& sym) const {
         for (const Stock& s : market.stocks) if (s.def.symbol == sym) return &s;
@@ -460,8 +563,13 @@ public:
         sa["marketValue"] = Json::dec(stockMarketValue());
         sa["pnlDay"] = Json::dec(round2(dailyPnlStock()));
         sa["pnlTotal"] = Json::dec(round2(stockEquity() - startEquity));
-        sa["marginUsed"] = Json::dec(0.0);
-        sa["buyingPower"] = Json::dec(cheat.infiniteMoney ? 1e15 : round2(stockAcc.cash));
+        sa["marginUsed"] = Json::dec(stockMarginDebt());
+        // 可用资金 = 现金 − 已用融资负债（负债是已借出的钱，不能再拿去开新仓）。
+        // 不足时报告 0，避免界面上出现负数"可用资金"造成误解。
+        {
+            double bp = stockAcc.cash - stockMarginDebt();
+            sa["buyingPower"] = Json::dec(cheat.infiniteMoney ? 1e15 : round2(std::max(0.0, bp)));
+        }
         sa["t1FrozenCash"] = Json::dec(t1FrozenCash());
         j["stockAccount"] = sa;
 
@@ -492,8 +600,29 @@ public:
             sp["avgCost"] = Json::dec(round4(p.avgCost));
             sp["last"] = Json::dec(round4(last));
             sp["marketValue"] = Json::dec(round2(mv));
-            sp["pnl"] = Json::dec(round2(mv - static_cast<double>(p.qty) * p.avgCost));
+            // 盈亏口径：市值 - 成本，再扣掉融资负债（负债属于该笔持仓的杠杆部分）
+            double grossPnl = mv - static_cast<double>(p.qty) * p.avgCost;
+            sp["pnl"] = Json::dec(round2(grossPnl));
             sp["pnlPct"] = Json::dec(round6(p.avgCost > 1e-9 ? (last - p.avgCost) / p.avgCost : 0.0));
+            sp["marginDebt"] = Json::dec(round2(p.marginDebt));
+            // ---- 做空（协议 v1.0.4）----
+            {
+                double spnl = 0.0;
+                if (p.shortQty > 0) {
+                    spnl = round2((p.shortAvgPrice - last) * static_cast<double>(p.shortQty));
+                }
+                sp["shortQty"] = Json(static_cast<double>(p.shortQty));
+                sp["shortAvgPrice"] = Json::dec(round4(p.shortAvgPrice));
+                sp["shortMargin"] = Json::dec(round2(p.shortMargin));
+                sp["shortPnl"] = Json::dec(spnl);
+                sp["shortPnlPct"] = Json::dec(round6(
+                        (p.shortAvgPrice > 1e-9 && p.shortQty > 0)
+                                ? (p.shortAvgPrice - last) / p.shortAvgPrice : 0.0));
+                sp["todayShortedQty"] = Json(static_cast<double>(p.todayShorted));
+            }
+            // 自有资金口径的收益率：分母为实际投入的自有保证金
+            double ownCost = static_cast<double>(p.qty) * p.avgCost - p.marginDebt;
+            sp["pnlPctOwn"] = Json::dec(round6(ownCost > 1e-9 ? grossPnl / ownCost : 0.0));
             sp["todayBoughtQty"] = Json(static_cast<double>(p.todayBought));
             sps.push_back(sp);
         }
@@ -796,6 +925,17 @@ public:
         std::string type = jgetStr(a, "type", "market");
         if (type != "market" && type != "limit")
             return failJson(err::BAD_ARG, "参数错误: type 必须为 market 或 limit（当前 " + type + "）");
+        // 股票融资杠杆（v1.0.2）：1 = 不用杠杆；上限 25 倍。仅买入方向可用。
+        double stockLev = 1.0;
+        if (jhas(a, "leverage")) {
+            if (!jhasNum(a, "leverage")) return failJson(err::BAD_ARG, "参数错误: leverage 必须是数字");
+            stockLev = jgetNum(a, "leverage", 1.0);
+            if (std::isnan(stockLev) || std::isinf(stockLev) || stockLev < 1.0 || stockLev > 25.0)
+                return failJson(err::BAD_ARG, "参数错误: 股票杠杆必须在 1..25 之间（当前 " + fmtNum(stockLev) + "）");
+            if (side != "buy")
+                return failJson(err::BAD_ARG, "参数错误: 杠杆仅用于买入（融资），卖出请去掉 leverage");
+            if (cheat.godMode) stockLev = 1.0;   // 上帝模式视为全额买入，不产生负债
+        }
         double price = 0.0;
         if (type == "limit") {
             if (!jhasNum(a, "price")) return failJson(err::BAD_ARG, "参数错误: 限价单缺少 price");
@@ -812,7 +952,10 @@ public:
         if (side == "buy") {
             double need = round2(execPrice * static_cast<double>(qty));
             double fee = commissionOf(need);
-            double total = round2(need + fee);
+            // 融资买入：只需自有保证金（总价 / 杠杆）+ 手续费，其余计入负债
+            double marginPart = round2(need / stockLev);
+            double debtPart = round2(need - marginPart);
+            double total = round2(marginPart + fee);
             double available = stockAcc.cash;
             if (cheat.infiniteMoney) {
                 if (available < total) {
@@ -828,9 +971,17 @@ public:
             if (type == "limit") {
                 double frozenUse = cheat.godMode ? 0.0 : total;
                 stockAcc.frozen = round2(stockAcc.frozen + frozenUse);
-                return limitResult(side, S, qty, price, stockAcc.cash);
+                // 挂单成交时才会真正产生负债，这里把杠杆记在订单上
+                Json lr = limitResult(side, S, qty, price, stockAcc.cash);
+                Order* lo = book.find(static_cast<int>(lr["orderId"].asNum()));
+                if (lo) lo->leverage = stockLev;
+                return lr;
             }
             recordBuy(S, qty, execPrice, need, fee);
+            if (debtPart > 0.0) {
+                StockPosition& p = stockAcc.ensure(S, s->def.name);
+                p.marginDebt = round2(p.marginDebt + debtPart);
+            }
             return marketResult(side, S, qty, execPrice, fee, stockAcc.cash);
         } else {
             long long sellable = stockAcc.sellable(S);
@@ -858,10 +1009,178 @@ public:
             }
             double gross = round2(execPrice * static_cast<double>(qty));
             double fee = commissionOf(gross);
+            double repay = repayDebtOnSell(S, qty);
             recordSell(S, qty, execPrice, gross, fee, "manual");
-            stockAcc.cash = round2(stockAcc.cash + gross - fee);
+            stockAcc.cash = round2(stockAcc.cash + gross - fee - repay);
             return marketResult(side, S, qty, execPrice, fee, stockAcc.cash);
         }
+    }
+
+    /**
+     * 卖出时按比例偿还该标的的融资负债。
+     *
+     * @return 本次应偿还的金额
+     */
+    double repayDebtOnSell(const std::string& sym, long long qty) {
+        StockPosition* p = stockAcc.find(sym);
+        if (!p || p->marginDebt <= 0.0 || p->qty <= 0) return 0.0;
+        double ratio = std::min(1.0, static_cast<double>(qty) / static_cast<double>(p->qty));
+        double repay = round2(p->marginDebt * ratio);
+        p->marginDebt = round2(p->marginDebt - repay);
+        if (p->marginDebt < 0.0) p->marginDebt = 0.0;
+        return repay;
+    }
+
+    // ================= 融券做空（协议 v1.0.4）=================
+    // 开空：借股票卖出，按 (数量 × 价格) / 杠杆 冻结保证金（杠杆 1..5，默认 1）
+    // 平空：买入归还，盈亏 = (开仓价 − 平仓价) × 数量
+    // 风控：空头保证金率 = (保证金 + 浮盈) / 开仓市值 × 100%，跌破 25% 追缴、20% 强平
+    Json stockShort(const Json& a) {
+        std::string sym = jgetStr(a, "symbol", "");
+        if (sym.empty()) return failJson(err::BAD_ARG, "参数错误: 缺少 symbol");
+        Stock* s = market.findStock(sym);
+        if (!s) {
+            if (market.isForexSymbol(sym))
+                return failJson(err::BAD_ARG, "外汇请使用 forex open/close 命令");
+            return failJson(err::NO_SUCH_SYMBOL, "未知代码 " + sym);
+        }
+        const std::string S = s->def.symbol;
+        if (s->halted) return failJson(err::MARKET_HALTED, "该标的已停牌: " + S);
+        if (s->last <= 0.0) return failJson(err::NO_MARKET_DATA, "行情数据缺失: " + S);
+        if (!jhas(a, "qty")) return failJson(err::BAD_ARG, "参数错误: 缺少 qty");
+        if (!jhasNum(a, "qty")) return failJson(err::BAD_ARG, "参数错误: qty 必须是数字");
+        {
+            double qd = jgetNum(a, "qty", 0.0);
+            if (std::isnan(qd) || std::isinf(qd)) return failJson(err::BAD_ARG, "参数错误: qty 非法");
+            if (std::fabs(qd) > 9.0e15) return failJson(err::BAD_QTY, "股票数量超出范围");
+            if (std::fabs(qd - std::round(qd)) > 1e-9) return failJson(err::BAD_QTY, "股票数量必须是整数股");
+        }
+        long long qty = jgetInt(a, "qty", 0);
+        if (qty <= 0 || qty % 100 != 0)
+            return failJson(err::BAD_QTY, "股票数量必须是100的整数倍");
+        std::string type = jgetStr(a, "type", "market");
+        if (type != "market" && type != "limit")
+            return failJson(err::BAD_ARG, "参数错误: type 必须为 market 或 limit（当前 " + type + "）");
+        double price = 0.0;
+        if (type == "limit") {
+            if (!jhasNum(a, "price")) return failJson(err::BAD_ARG, "限价单缺少 price");
+            price = round4(jgetNum(a, "price", 0.0));
+            if (!(price > 0.0)) return failJson(err::BAD_PRICE, "价格非法: " + fmtNum(price));
+        }
+        // 做空杠杆：1..5（比融资买入保守，真实市场融券保证金比例更高）
+        double lev = 1.0;
+        if (jhas(a, "leverage")) {
+            if (!jhasNum(a, "leverage")) return failJson(err::BAD_ARG, "参数错误: leverage 必须是数字");
+            lev = jgetNum(a, "leverage", 1.0);
+            if (std::isnan(lev) || std::isinf(lev) || lev < 1.0 || lev > 5.0)
+                return failJson(err::BAD_ARG, "参数错误: 做空杠杆必须在 1..5 之间（当前 " + fmtNum(lev) + "）");
+            if (cheat.godMode) lev = 1.0;
+        }
+
+        double execPrice = (type == "market") ? marketBuySellPrice(*s, "sell", qty) : price;
+        if (execPrice <= 0.0) return failJson(err::NO_MARKET_DATA, "行情数据缺失: " + S);
+
+        double notional = round2(execPrice * static_cast<double>(qty));
+        double marginNeed = round2(notional / lev);
+        double fee = commissionOf(notional);
+        double total = round2(marginNeed + fee);
+
+        double available = stockAcc.cash;
+        if (cheat.infiniteMoney && available < total) {
+            stockAcc.cash = total;
+            available = total;
+        }
+        if (available + 1e-9 < total) {
+            return failJson(err::INSUFFICIENT_CASH,
+                            "可用资金不足: 做空需冻结保证金 " + fmtMoney(total) + "，可用 " + fmtMoney(available));
+        }
+        stockAcc.cash = round2(stockAcc.cash - total);
+        StockPosition& p = stockAcc.ensure(S, s->def.name);
+        double oldNotional = p.shortAvgPrice * static_cast<double>(p.shortQty);
+        p.shortQty += qty;
+        p.shortAvgPrice = p.shortQty > 0
+                ? round4((oldNotional + notional) / static_cast<double>(p.shortQty))
+                : 0.0;
+        p.shortMargin = round2(p.shortMargin + marginNeed);
+        p.todayShorted += qty;
+        lastShortedSymbol = S;
+        // 计入佣金统计并写入成交流水（早期漏了这两步：
+        // totalCommission 统计偏低，且开空在「成交」页看不到记录）
+        totalCommission = round2(totalCommission + fee);
+        addTrade("stock", S, "short", qty, execPrice, notional, fee, 0.0, "manual", true);
+
+        Json j = Json::obj();
+        j["orderId"] = Json(book.nextId++);
+        j["status"] = Json("filled");
+        j["filled"] = Json(static_cast<double>(qty));
+        j["avgPrice"] = Json::dec(round4(execPrice));
+        j["commission"] = Json::dec(round2(fee));
+        j["cash"] = Json::dec(round2(stockAcc.cash));
+        j["shortQty"] = Json(static_cast<double>(p.shortQty));
+        j["shortMargin"] = Json::dec(round2(p.shortMargin));
+        return j;
+    }
+
+    /** 平空（买入归还）：qty 可省略 = 全部平掉。 */
+    Json stockCover(const Json& a) {
+        std::string sym = jgetStr(a, "symbol", "");
+        if (sym.empty()) return failJson(err::BAD_ARG, "参数错误: 缺少 symbol");
+        Stock* s = market.findStock(sym);
+        if (!s) return failJson(err::NO_SUCH_SYMBOL, "未知代码 " + sym);
+        const std::string S = s->def.symbol;
+        if (s->halted) return failJson(err::MARKET_HALTED, "该标的已停牌: " + S);
+        if (s->last <= 0.0) return failJson(err::NO_MARKET_DATA, "行情数据缺失: " + S);
+        StockPosition* p = stockAcc.find(S);
+        if (!p || p->shortQty <= 0) return failJson(err::NO_POSITION, "没有 " + S + " 的空头持仓");
+        long long qty = jhas(a, "qty") ? jgetInt(a, "qty", 0) : p->shortQty;
+        if (qty <= 0 || qty % 100 != 0)
+            return failJson(err::BAD_QTY, "股票数量必须是100的整数倍");
+        long long sellable = p->shortQty - p->todayShorted;
+        if (qty > sellable) {
+            if (p->todayShorted > 0 && qty <= p->shortQty) {
+                return failJson(err::T1_LOCKED,
+                                "T+1 锁定：当日做空 " + std::to_string(p->todayShorted) +
+                                " 股需次日开盘后可平");
+            }
+            return failJson(err::INSUFFICIENT_POSITION,
+                            "可平空头不足: 需要 " + std::to_string(qty) + " 股，可平 " +
+                            std::to_string(sellable) + " 股");
+        }
+        double execPrice = marketBuySellPrice(*s, "buy", qty);
+        if (execPrice <= 0.0) execPrice = s->last;
+        double notional = round2(execPrice * static_cast<double>(qty));
+        double fee = commissionOf(notional);
+        // 平空盈亏 = (开仓价 − 平仓价) × 数量
+        double pnl = round2((p->shortAvgPrice - execPrice) * static_cast<double>(qty));
+        // 释放按比例冻结的保证金
+        double ratio = static_cast<double>(qty) / static_cast<double>(p->shortQty);
+        double marginBack = round2(p->shortMargin * ratio);
+        stockAcc.cash = round2(stockAcc.cash + marginBack - fee + pnl);
+        p->shortMargin = round2(p->shortMargin - marginBack);
+        p->shortQty -= qty;
+        p->todayShorted -= std::min(p->todayShorted, qty);
+        if (p->shortQty <= 0) {
+            p->shortQty = 0;
+            p->shortAvgPrice = 0.0;
+            p->shortMargin = 0.0;
+            p->todayShorted = 0;
+        }
+        addTrade("stock", S, "cover", qty, execPrice, notional, fee, pnl, "manual", true);
+        totalCommission = round2(totalCommission + fee);   // 早期漏计
+        realizedPnl = round2(realizedPnl + pnl);
+        if (pnl > 0) ++winCount;
+        stockAcc.dropEmpty();
+
+        Json j = Json::obj();
+        j["orderId"] = Json(book.nextId++);
+        j["status"] = Json("filled");
+        j["filled"] = Json(static_cast<double>(qty));
+        j["avgPrice"] = Json::dec(round4(execPrice));
+        j["commission"] = Json::dec(round2(fee));
+        j["cash"] = Json::dec(round2(stockAcc.cash));
+        j["realizedPnl"] = Json::dec(pnl);
+        j["shortQty"] = Json(static_cast<double>(p->shortQty));
+        return j;
     }
 
     double marketBuySellPrice(const Stock& s, const std::string& side, long long qty) const {
@@ -1348,8 +1667,10 @@ public:
         if (autoMode) runAutoAtSlot(events);
         // 6) 新闻
         maybeNews(events);
-        // 7) 外汇强平检查
+        // 7) 强平检查：外汇（§3.8b）、股票融资（v1.0.3）、股票融券（v1.0.4）
         checkMargin(events);
+        checkStockMargin(events);
+        checkStockShortMargin(events);
         // 8) 协议 §3.8a：限价挂单 TTL 在每个时间片结束时递减
         expireOrders(events);
     }
@@ -1371,42 +1692,93 @@ public:
         }
         sessionDayStartEquity = totalEquity();
         // 分红（确定性伪随机：按日期，约 8% 的交易日）
+        //
+        // 口径：per10 是【每 10 股】派息额（A 股习惯的表述），每股实际派息 = per10 / 10。
+        //       早期写成 dps = last*0.01 却按【每股】发钱，而提示语写的是"每10股"，
+        //       文案与实付相差 10 倍。现在两者统一到 per10。
+        //       同时股息率按"年 1.5%"摊到每个分红日（约每年 24 个分红日），
+        //       而不是每个分红日都发 1% 市值（那是凭空生钱）。
         double r = rng.uniform();
         if (r < 0.08 && !stockAcc.positions.empty()) {
             for (StockPosition& p : stockAcc.positions) {
-                if (p.qty <= 0) continue;
                 const Stock* s = constStock(p.symbol);
-                if (!s) continue;
-                double dps = round4(s->last * 0.01);
-                double div = round2(dps * static_cast<double>(p.qty));
-                if (div <= 0) continue;
-                stockAcc.cash = round2(stockAcc.cash + div);
-                dividendTotal = round2(dividendTotal + div);
-                realizedPnl = round2(realizedPnl + div);
-                Json e = Json::obj();
-                e["kind"] = Json("dividend");
-                e["symbol"] = Json(p.symbol);
-                e["qty"] = Json(static_cast<double>(p.qty));
-                e["amount"] = Json::dec(div);
-                e["note"] = Json("每10股派息 " + fixedStr(dps * 10.0, 2) + " 元");
-                e["at"] = time.toJson();
-                events.push_back(e);
-                addTrade("stock", p.symbol, "buy", 0, s->last, div, 0.0, div, "dividend", false);
+                if (!s || s->last <= 0.0) continue;
+                // 每年约 1.5% 股息率，分摊到约 24 个分红日 => 单次约 0.0625% 市值。
+                // 注意：只用【一个】精度截断点（per10），每股派息由 per10 直接推导，
+                // 否则 per10 与 perShare 各自 round4 会二次舍入，实付与文案对不上。
+                // 展示精度是 2 位小数（"每10股派息 X.XX 元"），所以直接把 per10 定在 2 位，
+                // 实付按同一个 per10 推导，保证"文案 × 股数 = 到账金额"完全可验算。
+                double per10 = round2(s->last * 0.015 / 24.0 * 10.0);
+                if (per10 <= 0.0) continue;
+                double perShareRaw = per10 / 10.0;        // 不再二次舍入
+                bool hasLong = p.qty > 0;
+                bool hasShort = p.shortQty > 0;
+                if (!hasLong && !hasShort) continue;
+
+                // 多头收息；空头倒贴（真实市场做空者在除息日须支付股息）
+                double longDiv = round2(perShareRaw * static_cast<double>(p.qty));
+                double shortOwe = round2(perShareRaw * static_cast<double>(p.shortQty));
+                double net = round2(longDiv - shortOwe);
+                if (std::fabs(net) < 0.005 && longDiv <= 0.0) continue;
+                if (longDiv <= 0.0 && shortOwe <= 0.0) continue;
+                stockAcc.cash = round2(stockAcc.cash + net);
+                dividendTotal = round2(dividendTotal + longDiv);
+                realizedPnl = round2(realizedPnl + net);
+
+                if (hasLong) {
+                    Json e = Json::obj();
+                    e["kind"] = Json("dividend");
+                    e["symbol"] = Json(p.symbol);
+                    e["qty"] = Json(static_cast<double>(p.qty));
+                    e["amount"] = Json::dec(longDiv);
+                    e["note"] = Json("每10股派息 " + fixedStr(per10, 2) + " 元");
+                    e["at"] = time.toJson();
+                    events.push_back(e);
+                    addTrade("stock", p.symbol, "buy", 0, s->last, longDiv, 0.0, longDiv,
+                             "dividend", false);
+                }
+                if (hasShort) {
+                    Json e = Json::obj();
+                    e["kind"] = Json("dividend");
+                    e["symbol"] = Json(p.symbol);
+                    e["qty"] = Json(static_cast<double>(p.shortQty));
+                    e["amount"] = Json::dec(round2(-shortOwe));
+                    e["note"] = Json("做空需支付股息 每10股 "
+                                     + fixedStr(per10, 2) + " 元（共 " + fmtMoney(shortOwe) + "）");
+                    e["at"] = time.toJson();
+                    events.push_back(e);
+                    addTrade("stock", p.symbol, "cover", 0, s->last, shortOwe, 0.0,
+                             round2(-shortOwe), "dividend", false);
+                }
             }
         }
         if (settings.t1) {
+            // 多头今日买入与空头今日开空都属于 T+1 锁定，两者都要解锁。
+            // （早期只判断 todayBought，导致只做空不买入的标的永远无法平仓。）
             bool anyLocked = false;
-            for (const StockPosition& p : stockAcc.positions) if (p.todayBought > 0) anyLocked = true;
+            for (const StockPosition& p : stockAcc.positions) {
+                if (p.todayBought > 0 || p.todayShorted > 0) anyLocked = true;
+            }
             if (anyLocked) {
                 for (const StockPosition& p : stockAcc.positions) {
-                    if (p.todayBought <= 0) continue;
-                    Json ev = Json::obj();
-                    ev["kind"] = Json("t1_unlock");
-                    ev["symbol"] = Json(p.symbol);
-                    ev["qty"] = Json(static_cast<double>(p.todayBought));
-                    ev["note"] = Json("T+1 解锁：当日买入的 " + std::to_string(p.todayBought) + " 股今日可卖");
-                    ev["at"] = time.toJson();
-                    events.push_back(ev);
+                    if (p.todayBought > 0) {
+                        Json ev = Json::obj();
+                        ev["kind"] = Json("t1_unlock");
+                        ev["symbol"] = Json(p.symbol);
+                        ev["qty"] = Json(static_cast<double>(p.todayBought));
+                        ev["note"] = Json("T+1 解锁：当日买入的 " + std::to_string(p.todayBought) + " 股今日可卖");
+                        ev["at"] = time.toJson();
+                        events.push_back(ev);
+                    }
+                    if (p.todayShorted > 0) {
+                        Json ev = Json::obj();
+                        ev["kind"] = Json("t1_unlock");
+                        ev["symbol"] = Json(p.symbol);
+                        ev["qty"] = Json(static_cast<double>(p.todayShorted));
+                        ev["note"] = Json("T+1 解锁：当日做空的 " + std::to_string(p.todayShorted) + " 股今日可平");
+                        ev["at"] = time.toJson();
+                        events.push_back(ev);
+                    }
                 }
                 stockAcc.unlockT1();
             }
@@ -1486,10 +1858,265 @@ public:
         news.makeRandom(time, rng, market, cheat.winRate, true, &events, at);
     }
 
+    // 协议 v1.0.3：股票融资强平检查（每个时间片结束时执行）
+    //   - 维持保证金率 = (市值 + 冻结 − 负债) / (市值 + 冻结) * 100
+    //   - 跌破 25% 发 margin_call(触发器) 预警
+    //   - 跌破 20% 强制平仓：优先卖出维持率最低（相对亏损最大）的标的，
+    //     直到回到 25% 以上或融资负债清零
+    //   - 权益 <= 0 时追加 bankrupt
+    void checkStockMargin(std::vector<Json>& events) {
+        if (cheat.godMode) return;
+        if (stockMarginDebt() <= 1e-9) return;
+
+        double lvl = stockMarginLevel();
+        if (lvl >= STOCK_CALL_LEVEL) {
+            stockCalled = false;
+            return;
+        }
+        if (!stockCalled) {
+            stockCalled = true;
+            Json ev = Json::obj();
+            ev["kind"] = Json("margin_call");
+            ev["account"] = Json("stock");
+            ev["mode"] = Json("warn");
+            ev["level"] = Json::dec(round2(lvl));
+            ev["debt"] = Json::dec(stockMarginDebt());
+            // loss = 维持保证金缺口（要把保证金率补回 25% 所需的自有资金），恒为非负。
+            // 早期没有这个字段，前端取不到就显示"亏损 0.0"，看起来像没亏钱。
+            ev["loss"] = Json::dec(stockMarginShortfall());
+            // 浮动亏损（负数）另给一个字段，便于前端区分"缺口"与"浮亏"
+            ev["floatPnl"] = Json::dec(stockFloatPnl());
+            ev["note"] = Json("融资维持保证金率低于 25%，请及时补充资金或减仓（低于 20% 将强制平仓）");
+            ev["at"] = time.toJson();
+            events.push_back(ev);
+        }
+        if (lvl >= STOCK_FORCE_LEVEL) return;
+
+        // ---- 强制平仓 ----
+        // 反复取"当前最危险"的标的平仓，直到维持率回到 25% 以上、或无可平标的。
+        // 注意：不能只遍历一次预先生成的候选表 —— 那样每个标的只会被平一次，
+        // 而单次平仓量受可卖股数限制，可能远不足以把维持率拉回目标线。
+        const int MAX_ROUNDS = 200;
+        for (int round = 0; round < MAX_ROUNDS; ++round) {
+            if (stockMarginLevel() >= STOCK_CALL_LEVEL) break;
+            if (stockMarginDebt() <= 1e-9) break;
+            // 每一轮都重新挑"自有权益占比最低"的标的
+            std::pair<double, std::string> worst(1e18, std::string());
+            for (const StockPosition& q : stockAcc.positions) {
+                if (q.qty <= 0 || q.marginDebt <= 1e-9) continue;
+                const Stock* qs = constStock(q.symbol);
+                if (!qs || qs->halted || qs->last <= 0.0) continue;
+                double qmv = static_cast<double>(q.qty) * qs->last;
+                double qown = qmv - q.marginDebt;
+                double qratio = qmv > 1e-9 ? qown / qmv : 0.0;
+                if (qratio < worst.first) worst = std::make_pair(qratio, q.symbol);
+            }
+            if (worst.second.empty()) break;   // 全是停牌/无行情，无法平仓
+
+            StockPosition* p = stockAcc.find(worst.second);
+            if (!p || p->qty <= 0) break;
+            const Stock* s = constStock(p->symbol);
+            if (!s || s->last <= 0.0) continue;
+
+            // 需要卖出多少股才能让维持率回到目标线？
+            double gross = stockMarketValue() + stockAcc.frozen;
+            double debt = stockMarginDebt();
+            double target = STOCK_CALL_LEVEL / 100.0;
+            double needSellMv = (target * gross - (gross - debt)) / (1.0 - target);
+            if (needSellMv <= 0.0) break;
+            long long sellQty = static_cast<long long>(std::ceil(needSellMv / s->last / 100.0)) * 100;
+            if (sellQty < 100) sellQty = 100;
+            // 不卖当日买入（T+1）；先把可卖的卖掉
+            long long sellable = p->qty - p->frozenQty - p->todayBought;
+            if (sellable < 100) {
+                sellable = p->qty - p->frozenQty;   // T+1 在强平场景下让路（见协议说明）
+            }
+            if (sellable < 100) continue;
+            if (sellQty > sellable) sellQty = (sellable / 100) * 100;
+            if (sellQty <= 0) continue;
+
+            double px = marketBuySellPrice(*s, "sell", sellQty);
+            if (px <= 0.0) px = s->last;
+            double amount = round2(px * static_cast<double>(sellQty));
+            double fee = commissionOf(amount);
+            double lvlBefore = stockMarginLevel();
+            double repay = repayDebtOnSell(p->symbol, sellQty);
+            stockAcc.cash = round2(stockAcc.cash + amount - fee - repay);
+
+            Json ev = Json::obj();
+            ev["kind"] = Json("margin_call");
+            ev["account"] = Json("stock");
+            ev["mode"] = Json("liquidate");
+            ev["symbol"] = Json(p->symbol);
+            ev["side"] = Json("sell");
+            ev["qty"] = Json(static_cast<double>(sellQty));
+            ev["price"] = Json::dec(round4(px));
+            ev["level"] = Json::dec(round2(lvlBefore));
+            ev["debt"] = Json::dec(stockMarginDebt());
+            // loss = 本笔强平的实际亏损（卖出净得 − 该部分成本），负数表示亏损
+            ev["loss"] = Json::dec(round2(amount - fee
+                                          - static_cast<double>(sellQty) * p->avgCost));
+            ev["note"] = Json("融资维持保证金率低于 20%，强制平仓 " + p->symbol);
+            ev["at"] = time.toJson();
+            events.push_back(ev);
+
+            // 已实现盈亏 = 卖出成交额 − 手续费 − 该部分持仓成本
+            // （偿还的负债属于本金归还，不计入盈亏）
+            double realized = round2(amount - fee - static_cast<double>(sellQty) * p->avgCost);
+            addTrade("stock", p->symbol, "sell", sellQty, px, amount, fee, realized,
+                     "liquidation", true);
+            totalCommission = round2(totalCommission + fee);
+            realizedPnl = round2(realizedPnl + realized);
+            p->qty -= sellQty;
+            p->todayBought -= std::min(p->todayBought, sellQty);
+            if (p->qty <= 0) {
+                p->qty = 0;
+                p->frozenQty = 0;
+                p->todayBought = 0;
+                p->marginDebt = 0.0;
+            }
+            stockAcc.dropEmpty();
+        }
+
+        if (stockEquity() <= 0.0 && !bankruptStock.load()) {
+            bankruptStock = true;
+            Json ev = Json::obj();
+            ev["kind"] = Json("bankrupt");
+            ev["account"] = Json("stock");
+            ev["note"] = Json("股票账户爆仓（融资穿仓）");
+            ev["at"] = time.toJson();
+            events.push_back(ev);
+        }
+    }
+
     // 协议 §3.8b：外汇爆仓检查
     // marginLevel = equity / margin * 100（无持仓 0.0）；< 50 触发强平；
     // 从亏损最大的持仓开始平，直到 marginLevel >= 50 或持仓清空；
     // 击穿 50% 且 equity <= 0 -> 追加 bankrupt 事件。
+    // 协议 v1.0.4：股票融券（做空）风控
+    //   空头保证金率 = (冻结保证金 + 浮盈) / 开仓市值 × 100%
+    //   跌破 25% 预警；跌破 20% 强制平空（买入归还）
+    void checkStockShortMargin(std::vector<Json>& events) {
+        if (cheat.godMode) return;
+        bool hasShort = false;
+        for (const StockPosition& p : stockAcc.positions) {
+            if (p.shortQty > 0) { hasShort = true; break; }
+        }
+        if (!hasShort) return;
+
+        double margin = stockShortMargin();
+        double notional = 0.0;
+        for (const StockPosition& p : stockAcc.positions) {
+            if (p.shortQty > 0) notional += p.shortAvgPrice * static_cast<double>(p.shortQty);
+        }
+        if (notional <= 1e-9) return;
+        double level = round2((margin + stockShortPnl()) / notional * 100.0);
+        if (level >= STOCK_CALL_LEVEL) {
+            stockShortCalled = false;
+            return;
+        }
+        if (!stockShortCalled) {
+            stockShortCalled = true;
+            Json ev = Json::obj();
+            ev["kind"] = Json("margin_call");
+            ev["account"] = Json("stock");
+            ev["mode"] = Json("warn");
+            ev["side"] = Json("short");
+            ev["level"] = Json::dec(round2(level));
+            // loss = 要补回 25% 所需的自有资金（恒非负）；floatPnl 为做空浮动盈亏（亏损为负）
+            ev["loss"] = Json::dec(shortMarginShortfall());
+            ev["floatPnl"] = Json::dec(stockShortPnl());
+            ev["note"] = Json("融券保证金率低于 25%，请及时补充资金或减仓（低于 20% 将强制平仓）");
+            ev["at"] = time.toJson();
+            events.push_back(ev);
+        }
+        if (level >= STOCK_FORCE_LEVEL) return;
+
+        // 强制平空：反复买入归还最危险的标的
+        const int MAX_ROUNDS = 200;
+        for (int round = 0; round < MAX_ROUNDS; ++round) {
+            double m = stockShortMargin();
+            double n = 0.0;
+            for (const StockPosition& p : stockAcc.positions) {
+                if (p.shortQty > 0) n += p.shortAvgPrice * static_cast<double>(p.shortQty);
+            }
+            if (n <= 1e-9) break;
+            double lvl = round2((m + stockShortPnl()) / n * 100.0);
+            if (lvl >= STOCK_CALL_LEVEL) break;
+
+            // 挑保证金率最低的空头
+            std::string worst;
+            double worstRatio = 1e18;
+            for (const StockPosition& p : stockAcc.positions) {
+                if (p.shortQty <= 0) continue;
+                const Stock* s = constStock(p.symbol);
+                if (!s || s->halted || s->last <= 0.0) continue;
+                double openMv = p.shortAvgPrice * static_cast<double>(p.shortQty);
+                if (openMv <= 1e-9) continue;
+                double ratio = (p.shortMargin + (p.shortAvgPrice - s->last) * static_cast<double>(p.shortQty))
+                               / openMv;
+                if (ratio < worstRatio) { worstRatio = ratio; worst = p.symbol; }
+            }
+            if (worst.empty()) break;
+
+            StockPosition* p = stockAcc.find(worst);
+            if (!p || p->shortQty <= 0) break;
+            const Stock* s = constStock(p->symbol);
+            if (!s || s->last <= 0.0) break;
+
+            long long sellable = p->shortQty - p->todayShorted;
+            if (sellable < 100) sellable = p->shortQty;   // 强平不受 T+1 限制
+            sellable = (sellable / 100) * 100;
+            if (sellable <= 0) break;
+
+            double px = marketBuySellPrice(*s, "buy", sellable);
+            if (px <= 0.0) px = s->last;
+            double amount = round2(px * static_cast<double>(sellable));
+            double fee = commissionOf(amount);
+            double pnl = round2((p->shortAvgPrice - px) * static_cast<double>(sellable));
+            double marginBack = round2(p->shortMargin * (static_cast<double>(sellable) / p->shortQty));
+            stockAcc.cash = round2(stockAcc.cash + marginBack - fee + pnl);
+            p->shortMargin = round2(p->shortMargin - marginBack);
+            p->shortQty -= sellable;
+            p->todayShorted = std::max(0LL, p->todayShorted - sellable);
+            if (p->shortQty <= 0) {
+                p->shortQty = 0;
+                p->shortAvgPrice = 0.0;
+                p->shortMargin = 0.0;
+                p->todayShorted = 0;
+            }
+            stockAcc.dropEmpty();
+
+            Json ev = Json::obj();
+            ev["kind"] = Json("margin_call");
+            ev["account"] = Json("stock");
+            ev["mode"] = Json("liquidate");
+            ev["side"] = Json("cover");
+            ev["symbol"] = Json(worst);
+            ev["qty"] = Json(static_cast<double>(sellable));
+            ev["price"] = Json::dec(round4(px));
+            ev["level"] = Json::dec(round2(lvl));
+            ev["loss"] = Json::dec(pnl);   // 平空盈亏，负数表示亏损
+            ev["note"] = Json("融券保证金率低于 20%，强制平仓（买入归还）" + worst);
+            ev["at"] = time.toJson();
+            events.push_back(ev);
+
+            addTrade("stock", worst, "cover", sellable, px, amount, fee, pnl, "liquidation", true);
+            totalCommission = round2(totalCommission + fee);
+            realizedPnl = round2(realizedPnl + pnl);
+        }
+
+        if (stockEquity() <= 0.0 && !bankruptStock.load()) {
+            bankruptStock = true;
+            Json ev = Json::obj();
+            ev["kind"] = Json("bankrupt");
+            ev["account"] = Json("stock");
+            ev["note"] = Json("股票账户爆仓（融券穿仓）");
+            ev["at"] = time.toJson();
+            events.push_back(ev);
+        }
+    }
+
     void checkMargin(std::vector<Json>& events) {
         if (cheat.godMode) return;
         if (forexAcc.positions.empty()) return;

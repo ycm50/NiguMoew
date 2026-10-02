@@ -41,7 +41,7 @@ public:
     std::vector<Row> rows;
     // 运行期错误（编译/启动失败等）
     std::vector<std::string> notes;
-    std::string title = "TradeTower 独立验证报告 (qa-verify)";
+    std::string title = "拟股喵喵 独立验证报告 (qa-verify)";
     std::string enginePath;
     std::string engineSha;
     std::string generatedAt;

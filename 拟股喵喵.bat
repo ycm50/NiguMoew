@@ -1,6 +1,6 @@
 @echo off
 rem ============================================================
-rem  TradeTower - double-click to play
+rem  NiguMeow - double-click to play
 rem  Pure simulation game. No real money involved.
 rem  (This file is intentionally ASCII-only: cmd.exe reads .bat
 rem   in the OEM codepage, so non-ASCII text here would be mangled.)

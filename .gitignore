@@ -1,8 +1,20 @@
 # ============================================================
-#  TradeTower 交易大亨 - Git 忽略规则
+#  拟股喵喵 - Git 忽略规则
 #  原则：源码与文档进仓库，一切【构建产物】与【测试证据】都不进。
-#  任何人 clone 后只需 scripts\build.cmd 就能从零重建全部产物。
+#  任何人 clone 后只需 scripts\build.cmd（桌面版）或 Android\build.cmd（安卓版）
+#  就能从零重建全部产物。
 # ============================================================
+
+# ---- Android 构建产物 ----
+/Android/.gradle/
+/Android/local.properties
+/Android/app/build/
+/Android/app/.cxx/
+/Android/build/
+/Android/captures/
+/Android/.idea/
+/Android/*.iml
+/Android/app/release/
 
 # ---- 构建产物（全部由 build.cmd 生成）----
 /build/

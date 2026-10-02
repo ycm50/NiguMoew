@@ -73,7 +73,7 @@ public final class SplashWindow extends JWindow {
                 BorderFactory.createLineBorder(UITheme.WIDGET),
                 BorderFactory.createEmptyBorder(18, 22, 16, 22)));
 
-        JLabel title = new JLabel("交易大亨 · TradeTower");
+        JLabel title = new JLabel("拟股喵喵");
         title.setFont(UITheme.font(Font.BOLD, 22));
         title.setForeground(UITheme.TEXT);
         title.setHorizontalAlignment(SwingConstants.CENTER);

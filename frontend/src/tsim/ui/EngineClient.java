@@ -240,7 +240,7 @@ public final class EngineClient {
                 + "  1. 运行 scripts\\build.cmd（生成 engine\\trade_sim.exe）\n"
                 + "  2. 运行 scripts\\run.cmd（会从仓库根目录启动本程序）\n"
                 + "  3. 或手动指定：java -D" + PROP_ENGINE_PATH
-                + "=A:\\Downloads\\tg\\engine\\trade_sim.exe -jar trade-tower.jar";
+                + "=A:\\Downloads\\tg\\engine\\trade_sim.exe -jar nigu-meow.jar";
     }
 
     /** 用指定可执行文件路径构造（测试可指向 mock 脚本）。 */
@@ -577,12 +577,25 @@ public final class EngineClient {
 
     /** 买/卖（股票）。 */
     public CompletableFuture<Map<String, Object>> buySell(String cmd, String symbol, int qty, String type, double price) {
+        return buySell(cmd, symbol, qty, type, price, 1);
+    }
+
+    /**
+     * 买/卖（股票），带融资杠杆。
+     *
+     * @param leverage 融资杠杆 1..25（协议 v1.0.2）；1 = 不用杠杆。仅买入有意义，卖出请传 1。
+     */
+    public CompletableFuture<Map<String, Object>> buySell(String cmd, String symbol, int qty, String type,
+                                                          double price, int leverage) {
         Map<String, Object> a = new LinkedHashMap<>();
         a.put("symbol", symbol);
         a.put("qty", Long.valueOf(qty));
         a.put("type", type == null ? "market" : type);
         if ("limit".equals(type)) {
             a.put("price", Double.valueOf(price));
+        }
+        if (leverage > 1 && "buy".equals(cmd)) {
+            a.put("leverage", Long.valueOf(leverage));
         }
         return request(cmd, a);
     }
@@ -731,7 +744,36 @@ public final class EngineClient {
 
     /** 买/卖并解析。 */
     public CompletableFuture<TradeResult> tradeModel(String cmd, String symbol, int qty, String type, double price) {
-        return buySell(cmd, symbol, qty, type, price).thenApply(TradeResult::of);
+        return tradeModel(cmd, symbol, qty, type, price, 1);
+    }
+
+    /**
+     * 股票做空 / 平空（协议 v1.0.4）。
+     *
+     * @param action   short = 开空，cover = 平空
+     * @param leverage 做空杠杆 1..5（平空忽略）
+     */
+    public CompletableFuture<Map<String, Object>> stockShortModel(String action, String symbol, int qty,
+                                                                  String type, double price, int leverage) {
+        Map<String, Object> a = new LinkedHashMap<>();
+        a.put("symbol", symbol);
+        a.put("qty", Long.valueOf(qty));
+        if ("short".equals(action)) {
+            a.put("type", type == null ? "market" : type);
+            if ("limit".equals(type)) {
+                a.put("price", Double.valueOf(price));
+            }
+            if (leverage > 1) {
+                a.put("leverage", Long.valueOf(leverage));
+            }
+        }
+        return request(action, a);
+    }
+
+    /** 买/卖并解析（带融资杠杆）。 */
+    public CompletableFuture<TradeResult> tradeModel(String cmd, String symbol, int qty, String type,
+                                                     double price, int leverage) {
+        return buySell(cmd, symbol, qty, type, price, leverage).thenApply(TradeResult::of);
     }
 
     // ------------------------------------------------------------ 内部线程
@@ -948,7 +990,7 @@ public final class EngineClient {
 
         static void reportProtocolMismatch(int engineVersion) {
             MISMATCH.set(true);
-            System.err.println("[TradeTower] 协议版本不一致：引擎=" + engineVersion
+            System.err.println("[拟股喵喵] 协议版本不一致：引擎=" + engineVersion
                     + "，前端=" + PROTOCOL_VERSION);
         }
 

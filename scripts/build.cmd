@@ -1,6 +1,6 @@
 @echo off
 rem ============================================================
-rem  TradeTower 交易大亨 - 全量构建
+rem  拟股喵喵 - build
 rem  用法: scripts\build.cmd [debug]
 rem ============================================================
 setlocal enabledelayedexpansion
@@ -75,16 +75,35 @@ if not "!JCERR!"=="0" ( echo [X] 前端编译失败 ^(exit !JCERR!^) & exit /b 1
 echo [OK] build\frontend\classes
 
 echo.
-echo === [4/5] 打包 trade-tower.jar =====
+echo === [4/5] 打包 nigu-meow.jar =====
 set "JAR=%JAVA_HOME%\bin\jar.exe"
 if not exist "!JAR!" set "JAR=A:\jdk-17.0.12\bin\jar.exe"
-if exist ""!JAR!"" (
-  pushd "!BUILD!\frontend\classes"
-  "!JAR!" --create --file "!BUILD!\frontend\trade-tower.jar" --main-class tsim.Main .
-  set "JRERR=!errorlevel!"
-  popd
-  if "!JRERR!"=="0" ( echo [OK] build\frontend\trade-tower.jar ) else ( echo [!] jar 打包失败，可忽略^(仍可用 class 目录启动^) )
+if not exist "!JAR!" ( echo [X] 找不到 jar.exe，无法打包前端 & exit /b 1 )
+rem 先删旧 jar：引擎/前端若正在运行会锁住它（Windows 文件锁），
+rem 旧版本这里把失败当成"可忽略"，结果静默沿用上一版旧 jar，构建产物与源码不一致。
+del /q "!BUILD!\frontend\nigu-meow.jar" > nul 2>&1
+set /a JAR_TRY=0
+:jar_retry
+pushd "!BUILD!\frontend\classes"
+"!JAR!" --create --file "!BUILD!\frontend\nigu-meow.jar" --main-class tsim.Main .
+set "JRERR=!errorlevel!"
+popd
+if "!JRERR!"=="0" goto jar_ok
+set /a JAR_TRY+=1
+if !JAR_TRY! GTR 1 (
+  echo [X] 打包前端 jar 失败（exit !JRERR!^)。
+  echo     常见原因：程序正在运行，占着 build\frontend\nigu-meow.jar。
+  echo     请先关闭游戏窗口后重试。
+  exit /b 1
 )
+echo [!] jar 被占用，结束残留的 javaw/trade_sim 后重试...
+taskkill /f /im javaw.exe > nul 2>&1
+taskkill /f /im trade_sim.exe > nul 2>&1
+ping -n 2 127.0.0.1 > nul
+del /q "!BUILD!\frontend\nigu-meow.jar" > nul 2>&1
+goto jar_retry
+:jar_ok
+echo [OK] build\frontend\nigu-meow.jar
 
 echo.
 echo === [4b/5] 编译前端测试类 =====
@@ -124,7 +143,6 @@ if exist "!ROOT!\tools\driver\driver.cpp" (
 echo.
 echo ============================================================
 echo  构建完成。运行: scripts\run.cmd
-echo  自测:     scripts\selftest.cmd
 echo ============================================================
 endlocal
 exit /b 0

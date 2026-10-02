@@ -20,6 +20,20 @@ struct StockPosition {
     long long frozenQty = 0;   // 挂单占用（属于 qty 的一部分）
     long long todayBought = 0; // 当日买入（T+1 锁定）
     double avgCost = 0.0;
+    // 融资买入产生的负债（杠杆 > 1 时为正）。卖出时按比例偿还。
+    double marginDebt = 0.0;
+
+    // ---- 融券做空（协议 v1.0.4）----
+    // 空头持仓用独立的字段记录：借入股票的市值 = shortQty * 开仓价。
+    long long shortQty = 0;        // 当前空头股数（>0 表示有做空）
+    double shortAvgPrice = 0.0;    // 做空均价
+    double shortMargin = 0.0;      // 已冻结的做空保证金
+    long long todayShorted = 0;    // 当日新开空（T+1 锁定，当日不可平）
+
+    /** 是否为纯空头（无多头持仓）。 */
+    bool isShortOnly() const { return qty <= 0 && shortQty > 0; }
+    /** 是否多空双向都有。 */
+    bool isMixed() const { return qty > 0 && shortQty > 0; }
 };
 
 // ---------------- 外汇持仓 ----------------
@@ -71,7 +85,11 @@ public:
     void dropEmpty() {
         for (size_t i = positions.size(); i-- > 0;) {
             const StockPosition& p = positions[i];
-            if (p.qty <= 0 && p.frozenQty <= 0) positions.erase(positions.begin() + static_cast<long>(i));
+            // 注意：必须把做空（shortQty）也算作"非空"，否则开空后会被误删，
+            // 导致 cover 永远报 NO_POSITION。
+            if (p.qty <= 0 && p.frozenQty <= 0 && p.shortQty <= 0) {
+                positions.erase(positions.begin() + static_cast<long>(i));
+            }
         }
     }
     long long sellable(const std::string& sym) const {
@@ -81,7 +99,10 @@ public:
         return v > 0 ? v : 0;
     }
     void unlockT1() {
-        for (StockPosition& p : positions) p.todayBought = 0;
+        for (StockPosition& p : positions) {
+            p.todayBought = 0;
+            p.todayShorted = 0;   // 做空同样适用 T+1
+        }
     }
     double marketValue(const Market& m) const {
         double v = 0.0;

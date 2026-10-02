@@ -1,4 +1,4 @@
-// jsoncheck.cpp - standalone line-wise JSON validator for TradeTower protocol output.
+// jsoncheck.cpp - standalone line-wise JSON validator for 拟股喵喵 protocol output.
 //
 // Purpose: machine-verify that every line the engine writes to stdout is
 //   * a single line of text (this tool reads by line, so any embedded newline
@@ -282,7 +282,7 @@ CheckResult checkLine(const std::string& line, bool anyTop) {
 
 void usage(std::FILE* f) {
     std::fprintf(f,
-        "jsoncheck - line-wise JSON/UTF-8 validator (TradeTower)\n"
+        "jsoncheck - line-wise JSON/UTF-8 validator (拟股喵喵)\n"
         "\n"
         "usage: jsoncheck [-q] [-v] [-any] [-allow-empty] [--summary] [-max N] [file...]\n"
         "  no file arguments: read from stdin, one protocol line per line\n"

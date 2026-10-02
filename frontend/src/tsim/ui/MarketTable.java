@@ -103,6 +103,8 @@ public final class MarketTable extends javax.swing.JPanel {
             } else if (idx == 1) {
                 selectedMarket = "forex";
             }
+            // 切换标签时把该市场的选中行高亮同步过去
+            restoreSelection();
         });
         add(tabs, java.awt.BorderLayout.CENTER);
     }
@@ -161,10 +163,11 @@ public final class MarketTable extends javax.swing.JPanel {
         return selectedSymbol;
     }
 
-    /** 程序化选中（不发事件）。 */
+    /** 程序化选中（不发事件，但同步表格高亮）。 */
     public void selectQuietly(String market, String symbol) {
         selectedMarket = market;
         selectedSymbol = symbol;
+        restoreSelection();
     }
 
     private void fireSelect(String market, String symbol) {
@@ -183,17 +186,36 @@ public final class MarketTable extends javax.swing.JPanel {
         restoreSelection();
     }
 
+    /**
+     * 把选中行恢复成 {@link #selectedSymbol} 对应的那一行。
+     *
+     * <p><b>必须做模型行号 → 视图行号的转换。</b>表格开了
+     * {@code setAutoCreateRowSorter(true)}，用户点表头排序后视图顺序与模型顺序不同；
+     * 早期直接把模型行号喂给 {@code setSelectionInterval}，只『代码』列升序时巧合正确，
+     * 一旦按涨跌幅等列排序，选中行就会跳到别的标的上（表现为"选完到处乱跳"）。</p>
+     */
     private void restoreSelection() {
-        if ("stock".equals(selectedMarket)) {
-            int idx = stockModel.indexOf(selectedSymbol);
-            if (idx >= 0) {
-                stockTable.getSelectionModel().setSelectionInterval(idx, idx);
-            }
-        } else {
-            int idx = forexModel.indexOf(selectedSymbol);
-            if (idx >= 0) {
-                forexTable.getSelectionModel().setSelectionInterval(idx, idx);
-            }
+        JTable table = "stock".equals(selectedMarket) ? stockTable : forexTable;
+        int modelRow = "stock".equals(selectedMarket)
+                ? stockModel.indexOf(selectedSymbol)
+                : forexModel.indexOf(selectedSymbol);
+        if (modelRow < 0) {
+            return;
+        }
+        int viewRow = table.convertRowIndexToView(modelRow);
+        if (viewRow < 0) {
+            return;
+        }
+        // 已经是这一行就不用重复设置（避免打断用户排序/选择）
+        if (table.getSelectedRow() == viewRow) {
+            return;
+        }
+        table.getSelectionModel().setSelectionInterval(viewRow, viewRow);
+        // 让选中行保持可见（用户可能手动滚走了）
+        try {
+            table.scrollRectToVisible(table.getCellRect(viewRow, 0, true));
+        } catch (RuntimeException ignored) {
+            // 布局尚未完成时忽略
         }
     }
 
