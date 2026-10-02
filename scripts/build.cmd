@@ -124,7 +124,6 @@ if exist "!ROOT!\tools\driver\driver.cpp" (
 echo.
 echo ============================================================
 echo  构建完成。运行: scripts\run.cmd
-echo  自测:     scripts\selftest.cmd
 echo ============================================================
 endlocal
 exit /b 0

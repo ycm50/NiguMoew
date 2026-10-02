@@ -10,12 +10,29 @@ set "ROOT=%CD%"
 set "EXE=%ROOT%\build\engine\trade_sim.exe"
 set "CLS=%ROOT%\build\frontend\classes"
 set "JAR=%ROOT%\build\frontend\nigu-meow.jar"
+rem 优先 javaw.exe（无控制台窗口）；找不到再退回 java.exe（会留一个黑窗）。
+rem 用 java.exe 时 start 会给它分配新控制台，脚本退出后黑窗仍留在桌面上。
 set "JAVA="
-if defined JAVA_HOME if exist "%JAVA_HOME%\bin\java.exe" set "JAVA=%JAVA_HOME%\bin\java.exe"
-if not defined JAVA if exist "A:\jdk-17.0.12\bin\java.exe" set "JAVA=A:\jdk-17.0.12\bin\java.exe"
-if not defined JAVA for %%j in (java.exe) do if not "%%~$PATH:j"=="" set "JAVA=%%~$PATH:j"
+set "HAS_W="
+if defined JAVA_HOME if exist "%JAVA_HOME%\bin\javaw.exe" (
+  set "JAVA=%JAVA_HOME%\bin\javaw.exe"
+  set "HAS_W=1"
+)
+if not defined HAS_W if exist "A:\jdk-17.0.12\bin\javaw.exe" (
+  set "JAVA=A:\jdk-17.0.12\bin\javaw.exe"
+  set "HAS_W=1"
+)
+if not defined HAS_W for %%j in (javaw.exe) do if not "%%~$PATH:j"=="" (
+  set "JAVA=%%~$PATH:j"
+  set "HAS_W=1"
+)
+if not defined HAS_W (
+  if defined JAVA_HOME if exist "%JAVA_HOME%\bin\java.exe" set "JAVA=%JAVA_HOME%\bin\java.exe"
+  if not defined JAVA if exist "A:\jdk-17.0.12\bin\java.exe" set "JAVA=A:\jdk-17.0.12\bin\java.exe"
+  if not defined JAVA for %%j in (java.exe) do if not "%%~$PATH:j"=="" set "JAVA=%%~$PATH:j"
+)
 if not defined JAVA (
-  echo [X] 未找到 java.exe，请安装 JDK 17 并设置 JAVA_HOME
+  echo [X] 未找到 javaw.exe / java.exe，请安装 JDK 17 并设置 JAVA_HOME
   pause
   exit /b 2
 )

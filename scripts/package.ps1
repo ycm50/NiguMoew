@@ -143,3 +143,7 @@ Write-Host "=== 完成 ===" -ForegroundColor Green
 Write-Host "文件   : dist\$pkgName-win64.zip"
 Write-Host "大小   : $sizeMb MB"
 Write-Host "SHA256 : $hash"
+
+# 显式返回 0：PowerShell 脚本不调用 exit 时 $LASTEXITCODE 不会被设置，
+# 调用方用 `$LASTEXITCODE -ne 0` 判断会因拿到空值而误判为失败（CI 曾因此假失败）。
+exit 0
