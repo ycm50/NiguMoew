@@ -1,4 +1,4 @@
-# 交易大亨 TradeTower
+# 拟股喵喵
 
 > **纯单机模拟游戏。不涉及任何真实资金、充值、提现或支付。**
 > 游戏里的"钱"是模拟数字，作弊器也是模拟功能。
@@ -11,7 +11,7 @@ C++ 引擎 + Java Swing 前端的**股票 / 外汇交易模拟游戏**。
 
 ## 下载即玩
 
-到 [Releases](../../releases/latest) 下载 **`trade-tower-x.y.z-win64.zip`**：
+到 [Releases](../../releases/latest) 下载 **`nigu-meow-x.y.z-win64.zip`**：
 
 1. 解压到任意目录
 2. 双击 **`play.bat`**

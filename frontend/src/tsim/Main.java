@@ -20,7 +20,7 @@ import tsim.ui.SplashWindow;
 import tsim.ui.UITheme;
 
 /**
- * 交易大亨 · TradeTower 前端入口。
+ * 拟股喵喵 前端入口。
  *
  * <p>启动流程：Nimbus 外观 → 启动画面 → 拉起 C++ 引擎子进程 → 新建游戏 → 显示主窗口。
  * 全程 UI 不阻塞：所有引擎调用都通过 {@link EngineClient} 的异步接口。</p>
@@ -59,7 +59,7 @@ public final class Main {
 
         final Path finalExe = exe.toAbsolutePath();
         final String finalName = playerName;
-        System.out.println("[TradeTower] 引擎路径解析为: " + finalExe);
+        System.out.println("[拟股喵喵] 引擎路径解析为: " + finalExe);
         if (!Files.isRegularFile(finalExe)) {
             splash.close();
             // 无人值守/脚本化场景下对话框会阻塞，先把原因打到 stderr，便于定位
@@ -132,12 +132,12 @@ public final class Main {
         } catch (ClassNotFoundException | InstantiationException | IllegalAccessException
                  | UnsupportedLookAndFeelException ex) {
             // 外观设置失败不影响功能，退回默认 LAF
-            System.err.println("[TradeTower] Nimbus 外观不可用，使用默认外观：" + ex.getMessage());
+            System.err.println("[拟股喵喵] Nimbus 外观不可用，使用默认外观：" + ex.getMessage());
         }
         try {
             UIManager.put("Label.font", new FontUIResource(UITheme.UI_FONT));
         } catch (RuntimeException ex) {
-            System.err.println("[TradeTower] 字体设置失败：" + ex.getMessage());
+            System.err.println("[拟股喵喵] 字体设置失败：" + ex.getMessage());
         }
         tuneUIManagerDefaults();
     }
@@ -195,13 +195,13 @@ public final class Main {
             }
         }
         if (!p.isEmpty()) {
-            System.err.println("[TradeTower] 部分 UI 默认值设置失败：" + p);
+            System.err.println("[拟股喵喵] 部分 UI 默认值设置失败：" + p);
         }
     }
 
     /** 便捷入口：直接用 java -cp ... tsim.Main 时打印工作目录信息。 */
     static void printBanner() {
-        System.out.println("TradeTower 前端 v1.0  (工作目录: " + System.getProperty("user.dir") + ")");
+        System.out.println("拟股喵喵 前端 v1.0  (工作目录: " + System.getProperty("user.dir") + ")");
         try {
             System.out.println("引擎路径: " + EngineClient.discoverEnginePath());
         } catch (RuntimeException ex) {

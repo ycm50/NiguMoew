@@ -3,7 +3,7 @@
   把构建产物打包成"解压即玩"的 Windows 发行包。
 
 .DESCRIPTION
-  - 产出 dist\trade-tower-<version>-win64.zip
+  - 产出 dist\nigu-meow-<version>-win64.zip
   - 内含：引擎 + MinGW 运行时 DLL + 前端 jar + **随包 JRE**（用户无需自己装 Java）
   - 同时产出 SHA256SUMS.txt
   - 本脚本与 .github/workflows/release.yml 的打包步骤逻辑一致，本地跑通即可确信 CI 也能跑通。
@@ -32,15 +32,15 @@ if ($Version -notmatch '^\d+\.\d+\.\d+$') {
 # 仓库根（基于脚本自身位置，与调用者当前目录无关）
 $repoRoot = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 $distRoot = Join-Path $repoRoot 'dist'
-$pkgName = "trade-tower-$Version"
+$pkgName = "nigu-meow-$Version"
 $stage = Join-Path $distRoot $pkgName
 
-Write-Host "=== 打包 TradeTower v$Version ===" -ForegroundColor Cyan
+Write-Host "=== 打包 拟股喵喵 v$Version ===" -ForegroundColor Cyan
 Write-Host "仓库根 : $repoRoot"
 
 # ---- 1. 检查必需产物 ----
 $exe = Join-Path $repoRoot 'build\engine\trade_sim.exe'
-$jar = Join-Path $repoRoot 'build\frontend\trade-tower.jar'
+$jar = Join-Path $repoRoot 'build\frontend\nigu-meow.jar'
 foreach ($f in @($exe, $jar)) {
     if (-not (Test-Path $f)) {
         throw "缺少构建产物：$f`n请先运行 scripts\build.cmd"
@@ -77,7 +77,7 @@ if ($copied -eq 0) {
 
 # ---- 4. 前端 jar ----
 Copy-Item $jar (Join-Path $stage 'frontend') -Force
-Write-Host "[OK] frontend\trade-tower.jar"
+Write-Host "[OK] frontend\nigu-meow.jar"
 
 # ---- 5. 随包 JRE ----
 if (-not $SkipJre) {
@@ -121,7 +121,7 @@ foreach ($f in @('README.md', 'USAGE.md', 'LICENSE')) {
 
 # ---- 7. 版本信息 ----
 @(
-  "TradeTower v$Version",
+  "拟股喵喵 v$Version",
   "============================================",
   "纯模拟交易游戏，不涉及任何真实资金。",
   "",

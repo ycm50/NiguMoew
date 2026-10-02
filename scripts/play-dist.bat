@@ -1,6 +1,6 @@
 @echo off
 rem ============================================================
-rem  TradeTower - double-click to play
+rem  NiguMeow - double-click to play
 rem  Pure simulation game. No real money involved.
 rem  Prefers the bundled JRE under runtime\jre.
 rem ============================================================
@@ -26,5 +26,5 @@ if not exist "%~dp0engine\trade_sim.exe" (
 )
 
 set "JAVA_TOOL_OPTIONS=-Dfile.encoding=UTF-8"
-start "TradeTower" /d "%~dp0" "%JAVA%" -cp "%~dp0frontend\trade-tower.jar" tsim.Main
+start "NiguMeow" /d "%~dp0" "%JAVA%" -cp "%~dp0frontend\nigu-meow.jar" tsim.Main
 exit /b 0

@@ -1,6 +1,6 @@
 @echo off
 rem ============================================================
-rem  TradeTower 交易大亨 - 全量自测
+rem  拟股喵喵 - selftest
 rem  用法: scripts\selftest.cmd [quick]
 rem ============================================================
 setlocal enabledelayedexpansion
@@ -12,7 +12,7 @@ set "EV=%BUILD%\evidence"
 set "FAILED=0"
 if not exist "!EV!" mkdir "!EV!"
 
-echo ########## TradeTower 自测 ##########
+echo ########## 拟股喵喵 自测 ##########
 echo.
 rem 记录被测引擎指纹，便于证据溯源（qa-verify 建议）
 if exist "!BUILD!\engine\trade_sim.exe" (
@@ -99,7 +99,7 @@ rem ---- 4b. 前端入口/端到端（java-ui 提供，Lead 纳入） ----------
 echo ---- [4b/6] frontend gates ----
 set "JAVAX=A:\jdk-17.0.12\bin\java.exe"
 if not exist "!JAVAX!" set "JAVAX=java"
-set "FECP=!BUILD!\frontend\trade-tower.jar;!BUILD!\frontend\classes;!BUILD!\selftest-classes"
+set "FECP=!BUILD!\frontend\nigu-meow.jar;!BUILD!\frontend\classes;!BUILD!\selftest-classes"
 if exist "!BUILD!\selftest-classes\tsim\tests\EntryPointTest.class" (
   "!JAVAX!" -cp "!FECP!" tsim.tests.EntryPointTest > "!EV!\frontend.log" 2>&1
   if errorlevel 1 ( echo [X] EntryPointTest 失败^(见 build\evidence\frontend.log^) & set "FAILED=1" ) else ( echo [OK] EntryPointTest ^(入口拉起引擎^) )
@@ -136,6 +136,10 @@ if exist "!BUILD!\selftest-classes\tsim\tests\MarginEventTest.class" (
   "!JAVAX!" -cp "!FECP!" tsim.tests.MarginEventTest >> "!EV!\frontend.log" 2>&1
   if errorlevel 1 ( echo [X] MarginEventTest 失败^(强平事件字段^) & set "FAILED=1" ) else ( echo [OK] MarginEventTest ^(强平事件含亏损^) )
 ) else ( echo [!] 跳过：MarginEventTest 未编译 )
+if exist "!BUILD!\selftest-classes\tsim\tests\NameTest.class" (
+  "!JAVAX!" -cp "!FECP!" tsim.tests.NameTest >> "!EV!\frontend.log" 2>&1
+  if errorlevel 1 ( echo [X] NameTest 失败^(游戏名残留^) & set "FAILED=1" ) else ( echo [OK] NameTest ^(改名无残留^) )
+) else ( echo [!] 跳过：NameTest 未编译 )
 if exist "!BUILD!\selftest-classes\tsim\tests\SelfTest.class" (
   "!JAVAX!" -cp "!FECP!" tsim.tests.SelfTest "!BUILD!\engine\trade_sim.exe" >> "!EV!\frontend.log" 2>&1
   if errorlevel 1 ( echo [X] 前端 SelfTest 失败 & set "FAILED=1" ) else ( echo [OK] 前端 SelfTest ^(真实引擎^) )

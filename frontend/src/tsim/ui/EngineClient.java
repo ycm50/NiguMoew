@@ -240,7 +240,7 @@ public final class EngineClient {
                 + "  1. 运行 scripts\\build.cmd（生成 engine\\trade_sim.exe）\n"
                 + "  2. 运行 scripts\\run.cmd（会从仓库根目录启动本程序）\n"
                 + "  3. 或手动指定：java -D" + PROP_ENGINE_PATH
-                + "=A:\\Downloads\\tg\\engine\\trade_sim.exe -jar trade-tower.jar";
+                + "=A:\\Downloads\\tg\\engine\\trade_sim.exe -jar nigu-meow.jar";
     }
 
     /** 用指定可执行文件路径构造（测试可指向 mock 脚本）。 */
@@ -990,7 +990,7 @@ public final class EngineClient {
 
         static void reportProtocolMismatch(int engineVersion) {
             MISMATCH.set(true);
-            System.err.println("[TradeTower] 协议版本不一致：引擎=" + engineVersion
+            System.err.println("[拟股喵喵] 协议版本不一致：引擎=" + engineVersion
                     + "，前端=" + PROTOCOL_VERSION);
         }
 

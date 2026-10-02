@@ -42,7 +42,7 @@ C++ 引擎负责股票/外汇模拟撮合、行情、T+1、时间推进与作弊
 - `scripts\build.cmd`   —— 全量构建
 - `scripts\run.cmd`     —— 构建并启动
 - `scripts\selftest.cmd`—— 跑全部自动测试
-最终用户入口就是这三个 + 生成的 `trade-tower.exe`。
+最终用户入口就是这三个 + 生成的 `nigu-meow.exe`。
 
 ## 6. 测试纪律（踩过的坑，人人遵守）
 1. **禁止在别人跑测试时重建 `build\engine\trade_sim.exe`**。引擎 exe 在 Windows 上被运行时会加锁，

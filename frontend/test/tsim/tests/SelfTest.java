@@ -57,7 +57,7 @@ public final class SelfTest {
         if (System.getenv("DISPLAY") == null && System.getProperty("java.awt.headless") == null) {
             System.setProperty("java.awt.headless", "true");
         }
-        System.out.println("==== TradeTower 前端自测 ====");
+        System.out.println("==== 拟股喵喵 前端自测 ====");
         System.out.println("中文字体: " + UITheme.FONT_FAMILY);
         System.out.println("涨跌配色: " + UITheme.colorSchemeName());
         testJson();

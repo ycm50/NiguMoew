@@ -83,7 +83,7 @@ public final class MainFrame extends JFrame {
 
     /** 构造主窗口（不启动引擎）。 */
     public MainFrame(EngineClient engine) {
-        super("交易大亨 · TradeTower  —  股票 / 外汇 模拟交易仿真器");
+        super("拟股喵喵  —  股票 / 外汇 模拟交易仿真器");
         this.engine = engine;
         setDefaultCloseOperation(DO_NOTHING_ON_CLOSE);
         setMinimumSize(new Dimension(1180, 720));
@@ -924,7 +924,7 @@ public final class MainFrame extends JFrame {
     }
 
     private void confirmExit() {
-        int r = JOptionPane.showConfirmDialog(this, "确定要退出交易大亨吗？", "退出确认",
+        int r = JOptionPane.showConfirmDialog(this, "确定要退出拟股喵喵吗？", "退出确认",
                 JOptionPane.OK_CANCEL_OPTION, JOptionPane.QUESTION_MESSAGE);
         if (r == JOptionPane.OK_OPTION) {
             refreshTimer.stop();
@@ -945,7 +945,7 @@ public final class MainFrame extends JFrame {
     }
 
     private static void showAbout() {
-        Dialogs.info(null, "交易大亨 · TradeTower  v1.0\n"
+        Dialogs.info(null, "拟股喵喵  v1.0\n"
                 + "C++ 引擎 + Java Swing 前端，本地单机运行。\n\n"
                 + UITheme.SIM_NOTICE + "。\n"
                 + "所有行情、新闻、账户均为程序生成的虚构数据，\n"
