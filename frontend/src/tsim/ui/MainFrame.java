@@ -281,8 +281,13 @@ public final class MainFrame extends JFrame {
         });
         tradePanel.setOrderHandler(new TradePanel.OrderHandler() {
             @Override
-            public void onStockOrder(String side, String type, int qty, double price) {
-                doStockOrder(side, type, qty, price);
+            public void onStockOrder(String side, String type, int qty, double price, int leverage) {
+                doStockOrder(side, type, qty, price, leverage);
+            }
+
+            @Override
+            public void onStockShort(String action, String type, int qty, double price, int leverage) {
+                doStockShort(action, type, qty, price, leverage);
             }
 
             @Override
@@ -294,7 +299,7 @@ public final class MainFrame extends JFrame {
             if ("forex".equals(market)) {
                 doForexClose(positionId, qty);
             } else {
-                doStockOrder("sell", "market", qty, 0);
+                doStockOrder("sell", "market", qty, 0, 1);
             }
         });
         orderPanel.setCancelHandler(this::doCancel);
@@ -442,6 +447,7 @@ public final class MainFrame extends JFrame {
         holdingsPanel.update(s);
         positionPanel.update(s.stockPositions, s.forexPositions);
         orderPanel.update(s.orders);
+        allOrders = s.orders;
         stockPositions = s.stockPositions;
         forexPositions = s.forexPositions;
         if (s.bankrupt) {
@@ -450,6 +456,7 @@ public final class MainFrame extends JFrame {
         updateTradePanelContext();
     }
 
+    private List<OrderInfo> allOrders = new ArrayList<>();
     private List<StockPosition> stockPositions = new ArrayList<>();
     private List<ForexPosition> forexPositions = new ArrayList<>();
 
@@ -603,6 +610,13 @@ public final class MainFrame extends JFrame {
             } else {
                 tradePanel.setPositionContext(pos.qty, pos.avgCost, pos.pnl, pos.pnlPct, pos.todayBoughtQty);
             }
+            // 下半区：多头 + 空头持仓行（按浮动盈亏排序，带卖出/平仓按钮）
+            if (pos == null) {
+                tradePanel.setPositionRows(0, 0, 0, 0, 0, 0, 0, 0, 0);
+            } else {
+                tradePanel.setPositionRows(pos.qty, pos.avgCost, pos.pnl, pos.pnlPct, pos.todayBoughtQty,
+                        pos.shortQty, pos.shortAvgPrice, pos.shortPnl, pos.todayShortedQty);
+            }
         } else {
             // 外汇卡片：显示该货币对的持仓手数与浮动盈亏
             tradePanel.setForexPositionContext(forexPositionText(selectedSymbol),
@@ -700,7 +714,7 @@ public final class MainFrame extends JFrame {
         }
     }
 
-    private void doStockOrder(String side, String type, int qty, double price) {
+    private void doStockOrder(String side, String type, int qty, double price, int leverage) {
         if (qty % 100 != 0 || qty <= 0) {
             Dialogs.error(this, "股票数量必须是 100 的整数倍（当前 " + qty + "）");
             return;
@@ -711,7 +725,7 @@ public final class MainFrame extends JFrame {
             return;
         }
         statusBar.setEngineStatus("正在下单 ...", true);
-        engine.tradeModel(side, sym, qty, type, price).whenComplete((tr, ex) -> SwingUtilities.invokeLater(() -> {
+        engine.tradeModel(side, sym, qty, type, price, leverage).whenComplete((tr, ex) -> SwingUtilities.invokeLater(() -> {
             statusBar.setEngineStatus("引擎运行中", true);
             if (ex != null) {
                 showTradeError(side, ex);
@@ -725,6 +739,38 @@ public final class MainFrame extends JFrame {
                     UITheme.money(tr.commission), UITheme.money(tr.cash)));
             afterTrade();
         }));
+    }
+
+    /** 股票做空 / 平空。 */
+    private void doStockShort(String action, String type, int qty, double price, int leverage) {
+        if (qty <= 0 || qty % 100 != 0) {
+            Dialogs.error(this, "股票数量必须是 100 的整数倍（当前 " + qty + "）");
+            return;
+        }
+        String sym = selectedSymbol;
+        if (sym == null || sym.isEmpty()) {
+            Dialogs.warn(this, "请先选择标的");
+            return;
+        }
+        statusBar.setEngineStatus("正在下单 ...", true);
+        engine.stockShortModel(action, sym, qty, type, price, leverage)
+                .whenComplete((res, ex) -> SwingUtilities.invokeLater(() -> {
+                    statusBar.setEngineStatus("引擎运行中", true);
+                    if (ex != null) {
+                        showTradeError(action, ex);
+                        return;
+                    }
+                    boolean isShort = "short".equals(action);
+                    Dialogs.success(this, String.format(java.util.Locale.ROOT,
+                            "%s %s\n成交：%d 股 @ %s\n手续费：%s\n%s：%s",
+                            isShort ? "做空卖出" : "平空买入", sym,
+                            Json.lng(res, "filled"), UITheme.price(Json.num(res, "avgPrice"), 2),
+                            UITheme.money(Json.num(res, "commission")),
+                            isShort ? "已冻结保证金" : "已实现盈亏",
+                            isShort ? UITheme.money(Json.num(res, "shortMargin"))
+                                    : UITheme.money(Json.num(res, "realizedPnl"))));
+                    afterTrade();
+                }));
     }
 
     private void doForexOpen(String side, int lots, int leverage, double stopLoss, double takeProfit) {

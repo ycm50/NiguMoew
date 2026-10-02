@@ -26,6 +26,7 @@ struct Order {
     long long expireAtAbsSlot = -1;  // <0 表示不过期（绝对 slot）
     long long ttlSlots = 0;          // 协议 §3.8a：限价单 TTL（时间片数），0=不过期
     double forexLots = 0.0;          // 外汇用（市价即时成交，保留字段以便前端展示）
+    double leverage = 1.0;           // 股票融资杠杆（协议 v1.0.2；1 = 不用杠杆）
     std::string slTPKey;             // 关联的止盈止损参数（引擎内部）
 
     long long remaining() const { return qty - filled; }

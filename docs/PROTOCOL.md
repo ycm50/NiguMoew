@@ -98,7 +98,8 @@
                   "pnlTotal": 250.0, "usedLots": 2, "currency":"USD"},
  "stockPositions": [ {"symbol":"SH600519","name":"贵州茅台","qty":100,"frozenQty":0,
                       "avgCost":1700.0,"last":1712.5,"marketValue":171250.0,
-                      "pnl":1250.0,"pnlPct":0.0074,"todayBoughtQty":100} ],
+                      "pnl":1250.0,"pnlPct":0.0074,
+                      "marginDebt":0.0,"pnlPctOwn":0.0074,"todayBoughtQty":100} ],
  "forexPositions": [ {"positionId":5,"symbol":"EURUSD","name":"欧元/美元","side":"long","lots":2,
                       "openRate":1.0812,"last":1.0850,"margin":200.0,"pnl":760.0,
                       "swap":-1.2,"stopLoss":0.0,"takeProfit":0.0} ],
@@ -145,6 +146,11 @@
 ### 3.7 buy / sell   （外汇用 long/short 的语义见 3.9；股票用下面两个）
 - args: `{"symbol":"SH600519","qty":100,"type":"market"|"limit","price":1700.0}`
   - `qty` 必须是 **100 的整数倍**（A 股规则），>0。`price` 仅 `type=="limit"` 时必填。
+  - **`leverage`（可选，v1.0.2）**：股票融资杠杆，整数 **1..25**，默认 1（不用杠杆）。
+    仅 **买入** 方向可用；卖出传 `leverage` 会返回 `BAD_ARG`。
+    - 自有保证金 = 成交金额 / leverage，手续费按**全额**计收，差额计入该持仓的 `marginDebt`（融资负债）；
+    - 卖出时按卖出股数比例**自动偿还**负债，净得款 = 成交额 − 手续费 − 偿还额；
+    - `stockAccount.equity` 与 `buyingPower` **已扣除**负债；越界（<1 或 >25）返回 `BAD_ARG`。
 - data: `{"orderId":11,"status":"filled"|"open","filled":100,"avgPrice":1701.2,"commission":17.01,"cash":799982.99}`
 - 失败错误码（**冻结**）：
   `NO_SUCH_SYMBOL` `BAD_QTY` `INSUFFICIENT_CASH` `INSUFFICIENT_POSITION`
@@ -152,6 +158,49 @@
 - **T+1 规则**：当日买入的股票 `todayBoughtQty` 在**下一个交易日开盘前**不可卖出；
   尝试卖出被锁数量返回错误码 `T1_LOCKED`，`message` 例："T+1 锁定：当日买入 100 股需次日开盘后可卖"。
 
+### 3.7b 股票融资强平（v1.0.3）
+- **维持保证金率** = `(持仓市值 + 冻结 − 融资负债) / (持仓市值 + 冻结) × 100%`。
+  无融资负债时为 `100%`，此时永不触发。
+- 引擎在**每个时间片结束时**检查（与外汇同期）：
+  1. 跌破 **25%** → 产生 `margin_call` 预警事件：
+     `{"kind":"margin_call","account":"stock","level":x,"debt":x,"note":"...","at":{...}}`
+     （同一轮下跌只提醒一次；回到 25% 以上后复位，可再次提醒）
+  2. 跌破 **20%** → **强制平仓**：反复卖出「自有权益占比最低」的标的，
+     直到维持率回到 25% 以上或负债清零。事件额外带 `symbol`/`side`/`qty`/`price`：
+     `{"kind":"margin_call","account":"stock","symbol":"SH600519","side":"sell","qty":100,"price":x,"level":x,"debt":x,"note":"融资维持保证金率低于 20%，强制平仓 SH600519","at":{...}}`
+  3. 强平成交写入 `history`，`reason = "liquidation"`；
+  4. 强平后 `stockEquity() <= 0` → 追加 `{"kind":"bankrupt","account":"stock"}` 并置 `bankrupt=true`。
+- **强平不受 T+1 限制**：风控优先于 T+1 冻结（真实市场亦如此），当日买入的股票在强平时可被卖出。
+- `godMode` 开启时不做任何强平检查（避免干扰测试）。
+- 前端应对 `account=="stock"` 的 `margin_call` 显示为"融资追缴/强平"，与外汇爆仓区分文案。
+### 3.7c 股票做空 / 平空（融券，v1.0.4）
+- **`short`**：开空。args `{"symbol":"SH600519","qty":100,"type":"market"|"limit","price":x,"leverage":1..5}`
+  - `qty` 必须是 **100 的整数倍**；`leverage` 可选，**1..5**（比融资买入保守），默认 1。
+  - 效果：借入股票卖出，成交额 / 杠杆 作为**冻结保证金**从现金扣除；
+    `shortQty`/`shortAvgPrice`/`shortMargin` 记录在 `stockPositions[]` 上。
+  - 返回：`{"orderId":N,"status":"filled","filled":100,"avgPrice":x,"commission":x,"cash":x,"shortQty":100,"shortMargin":x}`
+- **`cover`**：平空（买入归还）。args `{"symbol":"SH600519","qty":100}`（`qty` 省略 = 全平）
+  - 盈亏 = `(开仓价 − 平仓价) × 数量`；释放按比例冻结的保证金；返回含 `realizedPnl`。
+  - 成交写入 `history`，`side = "cover"`。
+- **T+1**：当日开空的仓位**当日不可平**，返回 `T1_LOCKED`；次日开盘后解锁。
+- **做空风控**：空头保证金率 = `(冻结保证金 + 浮盈) / 开仓市值 × 100%`
+  - 跌破 **25%** → `margin_call`（`account:"stock"`、`side:"short"`）预警；
+  - 跌破 **20%** → 强制平空（买入归还），事件 `side:"cover"`，成交 `reason:"liquidation"`。
+- **权益口径**：`stockEquity()` = 现金 + 冻结 + 多头市值 − 融资负债 + 做空保证金 + 做空浮盈。
+  （做空保证金从现金扣出后要加回，它仍是自有资金；做空浮盈才是真盈亏。）
+- 前端：交易按钮为 **做多买入 / 做空卖出**；持仓列表按**浮动盈亏降序**排序，
+  多头行带「卖出」按钮、空头行带「平仓」按钮。
+### 3.7d 股票 margin_call 事件字段（v1.0.5）
+股票融资/融券的 `margin_call` 事件**统一携带 `loss` 字段**（早期缺失，前端取不到就显示"亏损 0.0"）：
+- 公共字段：`kind` / `account:"stock"` / `level`（触发时保证金率 %）/ `at`。
+- `mode`：`"warn"`（仅预警，未强平）/ `"liquidate"`（本次已强平）。
+- **`loss` 的语义按 mode 区分**：
+  - `mode:"warn"`：`loss` = **保证金缺口**（把保证金率补回 25% 所需的自有资金），恒为非负；
+    另带 `floatPnl` = 当前浮动盈亏（亏损为负）。
+  - `mode:"liquidate"`：`loss` = **本笔强平的实际亏损**（负数表示亏损）。
+- 强平事件额外带：`symbol` / `side`（融资为 `"sell"`，融券为 `"cover"`）/ `qty`（股）/ `price`。
+- `debt`：融资口径为融资负债总额（仅融资路径携带）。
+- 前端**只在事件确实含 `loss` 时**才展示该行，避免用 0 兜底造成误导。
 ### 3.8 cancel
 - args: `{"orderId":11}`
 - data: `{"orderId":11,"cancelled":true,"refundedCash":20000.0}`
@@ -324,3 +373,12 @@ cheat.args: {"op":"<名>", ...op参数字段}
      前端**必须**靠 `order_expired` 事件本地留档才能向用户交代。
  11. §3.4 登记 `forexPositions[].positionId`。
  12. §3.8b 新增：外汇爆仓阈值 **marginLevel < 50%**，强平顺序为亏损最大优先。
+ 16. **§3.7d 股票 `margin_call` 统一携带 `loss`（缺口或本笔亏损）与 `mode`**，
+     前端不再用 0 兜底显示"亏损 0.0"。
+ 15. **§3.7c 新增股票做空（融券）**：`short` / `cover` 命令，杠杆 1..5，T+1 锁定，
+     空头保证金率 25% 预警 / 20% 强制平空；`stockPositions[]` 新增
+     `shortQty`/`shortAvgPrice`/`shortMargin`/`shortPnl`/`shortPnlPct`/`todayShortedQty`。
+ 14. **§3.7b 新增股票融资强平**：维持保证金率 25% 预警 / 20% 强制平仓，强平不受 T+1 限制。
+ 13. **§3.7 新增股票融资杠杆 `leverage`（1..25，仅买入）**；
+     §3.4 的 `stockPositions[]` 登记 `marginDebt`（融资负债）与 `pnlPctOwn`（自有资金收益率）。
+     `stockAccount.equity`/`buyingPower` 均**已扣除**融资负债；`marginUsed` 即负债总额。

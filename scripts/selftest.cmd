@@ -104,6 +104,38 @@ if exist "!BUILD!\selftest-classes\tsim\tests\EntryPointTest.class" (
   "!JAVAX!" -cp "!FECP!" tsim.tests.EntryPointTest > "!EV!\frontend.log" 2>&1
   if errorlevel 1 ( echo [X] EntryPointTest 失败^(见 build\evidence\frontend.log^) & set "FAILED=1" ) else ( echo [OK] EntryPointTest ^(入口拉起引擎^) )
 ) else ( echo [!] 跳过：EntryPointTest 未编译 )
+if exist "!BUILD!\selftest-classes\tsim\tests\LimitPriceTest.class" (
+  "!JAVAX!" -cp "!FECP!" tsim.tests.LimitPriceTest >> "!EV!\frontend.log" 2>&1
+  if errorlevel 1 ( echo [X] LimitPriceTest 失败^(限价委托价被行情覆盖^) & set "FAILED=1" ) else ( echo [OK] LimitPriceTest ^(限价不改用户委托价^) )
+) else ( echo [!] 跳过：LimitPriceTest 未编译 )
+if exist "!BUILD!\selftest-classes\tsim\tests\LeverageTest.class" (
+  "!JAVAX!" -cp "!FECP!" tsim.tests.LeverageTest >> "!EV!\frontend.log" 2>&1
+  if errorlevel 1 ( echo [X] LeverageTest 失败^(杠杆/仓位滑杆^) & set "FAILED=1" ) else ( echo [OK] LeverageTest ^(杠杆 25x/250x^) )
+) else ( echo [!] 跳过：LeverageTest 未编译 )
+if exist "!BUILD!\selftest-classes\tsim\tests\ScrollPanelTest.class" (
+  "!JAVAX!" -cp "!FECP!" tsim.tests.ScrollPanelTest >> "!EV!\frontend.log" 2>&1
+  if errorlevel 1 ( echo [X] ScrollPanelTest 失败^(面板滚动^) & set "FAILED=1" ) else ( echo [OK] ScrollPanelTest ^(滚轮可滚动^) )
+) else ( echo [!] 跳过：ScrollPanelTest 未编译 )
+if exist "!BUILD!\selftest-classes\tsim\tests\StockMarginTest.class" (
+  "!JAVAX!" -cp "!FECP!" tsim.tests.StockMarginTest "!BUILD!\engine\trade_sim.exe" >> "!EV!\frontend.log" 2>&1
+  if errorlevel 1 ( echo [X] StockMarginTest 失败^(股票融资强平^) & set "FAILED=1" ) else ( echo [OK] StockMarginTest ^(融资强平 25%%/20%%^) )
+) else ( echo [!] 跳过：StockMarginTest 未编译 )
+if exist "!BUILD!\selftest-classes\tsim\tests\ShortSellTest.class" (
+  "!JAVAX!" -cp "!FECP!" tsim.tests.ShortSellTest "!BUILD!\engine\trade_sim.exe" >> "!EV!\frontend.log" 2>&1
+  if errorlevel 1 ( echo [X] ShortSellTest 失败^(股票做空^) & set "FAILED=1" ) else ( echo [OK] ShortSellTest ^(做空/平空/T+1^) )
+) else ( echo [!] 跳过：ShortSellTest 未编译 )
+if exist "!BUILD!\selftest-classes\tsim\tests\MarketTableTest.class" (
+  "!JAVAX!" -cp "!FECP!" tsim.tests.MarketTableTest >> "!EV!\frontend.log" 2>&1
+  if errorlevel 1 ( echo [X] MarketTableTest 失败^(行情表选中跟手^) & set "FAILED=1" ) else ( echo [OK] MarketTableTest ^(排序后选中不跑偏^) )
+) else ( echo [!] 跳过：MarketTableTest 未编译 )
+if exist "!BUILD!\selftest-classes\tsim\tests\FeeAccountingTest.class" (
+  "!JAVAX!" -cp "!FECP!" tsim.tests.FeeAccountingTest "!BUILD!\engine\trade_sim.exe" >> "!EV!\frontend.log" 2>&1
+  if errorlevel 1 ( echo [X] FeeAccountingTest 失败^(计费/分红^) & set "FAILED=1" ) else ( echo [OK] FeeAccountingTest ^(计费/分红口径^) )
+) else ( echo [!] 跳过：FeeAccountingTest 未编译 )
+if exist "!BUILD!\selftest-classes\tsim\tests\MarginEventTest.class" (
+  "!JAVAX!" -cp "!FECP!" tsim.tests.MarginEventTest >> "!EV!\frontend.log" 2>&1
+  if errorlevel 1 ( echo [X] MarginEventTest 失败^(强平事件字段^) & set "FAILED=1" ) else ( echo [OK] MarginEventTest ^(强平事件含亏损^) )
+) else ( echo [!] 跳过：MarginEventTest 未编译 )
 if exist "!BUILD!\selftest-classes\tsim\tests\SelfTest.class" (
   "!JAVAX!" -cp "!FECP!" tsim.tests.SelfTest "!BUILD!\engine\trade_sim.exe" >> "!EV!\frontend.log" 2>&1
   if errorlevel 1 ( echo [X] 前端 SelfTest 失败 & set "FAILED=1" ) else ( echo [OK] 前端 SelfTest ^(真实引擎^) )
